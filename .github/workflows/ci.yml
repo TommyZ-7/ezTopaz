@@ -63,7 +63,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libpipewire-0.3-dev pkg-config
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libpipewire-0.3-dev libfuse2t64 pkg-config
       - name: Download pinned FFmpeg (BtbN GPL build)
         shell: bash
         env:
@@ -84,11 +84,17 @@ jobs:
             cp "/c/tmp-ffmpeg/${FFMPEG_DIR}-win64-gpl-8.1/bin/ffmpeg.exe" src-tauri/resources/ffmpeg/
           fi
       - name: Build bundles
-        # APPIMAGE_EXTRACT_AND_RUN: linuxdeploy needs FUSE, which 24.04 lacks
+        env:
+          # linuxdeploy needs FUSE, which 24.04 lacks → extract mode;
+          # NO_STRIP avoids linuxdeploy strip failures on some binaries
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "1"
+        run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
+      - name: Debug appimage (on failure)
+        if: failure() && runner.os == 'Linux'
         run: |
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          export NO_STRIP=true
-          pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
+          cat src-tauri/target/release/bundle/appimage/build-appimage.sh 2>/dev/null || true
+          cd src-tauri/target/release/bundle/appimage 2>/dev/null && APPIMAGE_EXTRACT_AND_RUN=1 bash ./build-appimage.sh 2>&1 | tail -40 || true
       - uses: actions/upload-artifact@v4
         with:
           name: eztopaz-${{ matrix.os }}

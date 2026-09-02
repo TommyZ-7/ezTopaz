@@ -89,12 +89,12 @@ jobs:
           # NO_STRIP avoids linuxdeploy strip failures on some binaries
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1"
-        run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
+        run: pnpm i && pnpm tauri build -v --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
       - name: Debug appimage (on failure)
         if: failure() && runner.os == 'Linux'
         run: |
-          cat target/release/bundle/appimage/build-appimage.sh 2>/dev/null || true
-          cd target/release/bundle/appimage 2>/dev/null && APPIMAGE_EXTRACT_AND_RUN=1 bash ./build-appimage.sh 2>&1 | tail -40 || true
+          ls -la target/release/bundle/appimage/ 2>/dev/null || true
+          find target/release/bundle/appimage -maxdepth 2 -name "*.sh" 2>/dev/null | head -5 || true
       - uses: actions/upload-artifact@v4
         with:
           name: eztopaz-${{ matrix.os }}

@@ -99,13 +99,10 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
+          NOTES="MVP preview build. FFmpeg (BtbN GPL build) is bundled — the GPL notice must ship with the artifacts (design §11). Windows: NSIS installer. Linux: deb (AppImage is planned for a later release)."
           # matrix の2ジョブが同じ Release へ追記するため冪等に
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "ezTopaz $TAG" \
-              --notes "MVP preview build (ffmpeg bundled, GPL notice required — see design §11).
-- Windows: NSIS installer
-- Linux: deb (Ubuntu/Debian系; AppImage は次版で対応)"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "ezTopaz $TAG" --notes "$NOTES"
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             $(find target/release/bundle -type f \( -name '*.deb' -o -name '*.exe' \))
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,63 @@
+{
+  "app": {
+    "title": "ezTopaz",
+    "settings": "設定",
+    "close": "閉じる",
+    "save": "保存",
+    "saved": "保存しました",
+    "logs": "ログを開く",
+    "licenses": "ライセンス (MIT / FFmpeg GPL)"
+  },
+  "screen": {
+    "tab": "画面",
+    "display": "全画面",
+    "window": "ウィンドウ",
+    "portalPicker": "Portalピッカーで選択",
+    "notAvailable": "キャプチャ機能はこのビルドでは未対応です"
+  },
+  "audio": {
+    "tab": "音声",
+    "system": "システム全体",
+    "apps": "アプリ指定",
+    "mic": "マイク",
+    "gain": "音量",
+    "mute": "ミュート"
+  },
+  "profile": {
+    "tab": "出力",
+    "low": "低",
+    "mid": "中",
+    "high": "高",
+    "p1080": "1080p",
+    "encoder": "エンコーダ",
+    "auto": "自動",
+    "warn1080p": "Topaz上限2000kのため画質が粗くなります。720p推奨",
+    "overBitrate": "Topaz上限を超えています (映像≤2000k / 音声≤320k)"
+  },
+  "stream": {
+    "ingest": "Ingest URL",
+    "key": "ストリームキー",
+    "keyInvalid": "キーは3〜64文字の半角英数字/ハイフン/アンダースコア",
+    "keyGeneric": "汎用的なキーは他の配信と衝突する恐れがあります",
+    "copyPc": "PC用URL",
+    "copyQuest": "Quest用URL",
+    "copied": "コピーしました",
+    "start": "配信開始",
+    "stop": "配信停止",
+    "live": "配信中",
+    "stopped": "停止中",
+    "retrying": "再接続中 {{n}}/3",
+    "notAvailable": "キャプチャバックエンドが無いビルドのため配信できません"
+  },
+  "settings": {
+    "title": "設定",
+    "profiles": "プロファイル",
+    "name": "名前",
+    "resolution": "解像度",
+    "fps": "FPS",
+    "vKbps": "映像 kbps",
+    "aKbps": "音声 kbps",
+    "duplicate": "複製",
+    "delete": "削除"
+  }
+}

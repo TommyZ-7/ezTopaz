@@ -1,0 +1,63 @@
+{
+  "app": {
+    "title": "ezTopaz",
+    "settings": "Settings",
+    "close": "Close",
+    "save": "Save",
+    "saved": "Saved",
+    "logs": "Open logs",
+    "licenses": "Licenses (MIT / FFmpeg GPL)"
+  },
+  "screen": {
+    "tab": "Screen",
+    "display": "Full screen",
+    "window": "Window",
+    "portalPicker": "Pick via Portal dialog",
+    "notAvailable": "Screen capture is not available in this build"
+  },
+  "audio": {
+    "tab": "Audio",
+    "system": "System audio",
+    "apps": "Per-app",
+    "mic": "Microphone",
+    "gain": "Volume",
+    "mute": "Mute"
+  },
+  "profile": {
+    "tab": "Output",
+    "low": "Low",
+    "mid": "Mid",
+    "high": "High",
+    "p1080": "1080p",
+    "encoder": "Encoder",
+    "auto": "Auto",
+    "warn1080p": "At Topaz's 2000kbps cap, quality suffers. 720p recommended",
+    "overBitrate": "Exceeds Topaz limits (video ≤2000k / audio ≤320k)"
+  },
+  "stream": {
+    "ingest": "Ingest URL",
+    "key": "Stream key",
+    "keyInvalid": "Key must be 3-64 alphanumeric/hyphen/underscore characters",
+    "keyGeneric": "Generic keys risk colliding with other streams",
+    "copyPc": "PC URL",
+    "copyQuest": "Quest URL",
+    "copied": "Copied",
+    "start": "Start stream",
+    "stop": "Stop stream",
+    "live": "Live",
+    "stopped": "Stopped",
+    "retrying": "Reconnecting {{n}}/3",
+    "notAvailable": "This build has no capture backend; streaming is disabled"
+  },
+  "settings": {
+    "title": "Settings",
+    "profiles": "Profiles",
+    "name": "Name",
+    "resolution": "Resolution",
+    "fps": "FPS",
+    "vKbps": "Video kbps",
+    "aKbps": "Audio kbps",
+    "duplicate": "Duplicate",
+    "delete": "Delete"
+  }
+}

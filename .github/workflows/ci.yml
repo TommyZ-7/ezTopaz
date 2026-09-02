@@ -77,13 +77,18 @@ jobs:
             tar -xf /tmp/ffmpeg.tar.xz -C /tmp
             cp "/tmp/${FFMPEG_DIR}-linux64-gpl-8.1/bin/ffmpeg" src-tauri/resources/ffmpeg/
           else
-            curl -sSL -o /tmp/ffmpeg.zip \
+            curl -sSL -o ffmpeg.zip \
               "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-8.1.zip"
-            powershell -Command "Expand-Archive -Force /tmp/ffmpeg.zip C:/tmp-ffmpeg"
+            # PowerShell cannot see Git-Bash's /tmp; use a workspace-relative path
+            powershell -Command "Expand-Archive -Force ffmpeg.zip C:/tmp-ffmpeg"
             cp "/c/tmp-ffmpeg/${FFMPEG_DIR}-win64-gpl-8.1/bin/ffmpeg.exe" src-tauri/resources/ffmpeg/
           fi
       - name: Build bundles
-        run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
+        # APPIMAGE_EXTRACT_AND_RUN: linuxdeploy needs FUSE, which 24.04 lacks
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export NO_STRIP=true
+          pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
       - uses: actions/upload-artifact@v4
         with:
           name: eztopaz-${{ matrix.os }}

@@ -109,10 +109,12 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn prepare_errors_until_windows_pipes_exist() {
+    fn prepare_creates_pipe_servers_on_windows() {
+        // the named-pipe server (design §4.1) makes prepare() succeed on Windows
         let profiles = ProfilesConfig::default();
-        let err = prepare(&cfg("k3y", "mid", "auto"), &profiles, &[]).unwrap_err();
-        assert!(matches!(err, Error::NotImplemented("windows named pipe server (capture-windows spike)")));
+        let plan = prepare(&cfg("k3y", "mid", "auto"), &profiles, &[]).unwrap();
+        assert!(plan.video_pipe.starts_with(r"\\.\pipe\"));
+        assert!(plan.audio_pipe.starts_with(r"\\.\pipe\"));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 pub mod sink;
 
-pub use sink::{scale_bgra, scale_bgra_into, VideoSink};
+pub use sink::{bgra_to_rgba, scale_bgra, scale_bgra_into, VideoSink};
 
 use crate::error::{Error, Result};
 use std::time::{Duration, Instant};

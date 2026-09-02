@@ -4,6 +4,7 @@
 //! capture-windows backend (spike); until then this module errors out there.
 
 use crate::error::{Error, Result};
+#[cfg(unix)]
 use std::path::Path;
 
 pub fn video_pipe_path() -> String {

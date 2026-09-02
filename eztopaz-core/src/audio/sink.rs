@@ -21,10 +21,11 @@ pub const MIC_ID: &str = "__mic__";
 /// ~10ms of stereo @48kHz
 const BLOCK: usize = 960;
 
+#[derive(Clone)]
 pub struct AudioSink {
     tx: mpsc::Sender<(String, Vec<f32>)>,
     stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
+    handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub mixer: Arc<Mutex<Mixer>>,
     pub last_vu: Arc<Mutex<VuMeter>>,
 }
@@ -97,7 +98,13 @@ impl AudioSink {
             })
             .map_err(|e| Error::Capture(format!("audio sink thread: {e}")))?;
 
-        Ok(Self { tx, stop, handle: Some(handle), mixer, last_vu })
+        Ok(Self {
+            tx,
+            stop,
+            handle: Arc::new(Mutex::new(Some(handle))),
+            mixer,
+            last_vu,
+        })
     }
 
     /// Push an interleaved stereo f32 block for a source. `"mic"` is the microphone.
@@ -105,10 +112,12 @@ impl AudioSink {
         self.tx.send((source_id.to_string(), block)).is_ok()
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
+        if let Ok(mut slot) = self.handle.lock() {
+            if let Some(h) = slot.take() {
+                let _ = h.join();
+            }
         }
     }
 }

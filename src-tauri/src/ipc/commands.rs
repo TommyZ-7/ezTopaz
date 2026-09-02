@@ -150,7 +150,6 @@ fn run_with_timeout(mut cmd: std::process::Command, timeout: Duration) -> Option
     use std::sync::mpsc;
     let (tx, rx) = mpsc::channel();
     let child = cmd.spawn().ok()?;
-    let pid = child.id();
     std::thread::spawn(move || {
         let mut child = child;
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);

@@ -2,7 +2,7 @@
 //!
 //! Capture backends push frames through [`VideoSink::push`]; the pump thread
 //! emits them at the profile fps (static screens keep flowing) and writes to
-//! the named pipe.
+//! the named pipe. Clonable so capture callbacks can hold a handle.
 
 use super::FramePacer;
 use crate::error::{Error, Result};
@@ -10,14 +10,15 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[derive(Clone)]
 pub struct VideoSink {
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: Arc<mpsc::Sender<Vec<u8>>>,
     stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
+    handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl VideoSink {
@@ -58,7 +59,11 @@ impl VideoSink {
             })
             .map_err(|e| Error::Capture(format!("video sink thread: {e}")))?;
 
-        Ok(Self { tx, stop, handle: Some(handle) })
+        Ok(Self {
+            tx: Arc::new(tx),
+            stop,
+            handle: Arc::new(Mutex::new(Some(handle))),
+        })
     }
 
     /// Push a freshly captured (already scaled) frame. Returns false when stopped.
@@ -66,10 +71,12 @@ impl VideoSink {
         self.tx.send(frame).is_ok()
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
+        if let Ok(mut slot) = self.handle.lock() {
+            if let Some(h) = slot.take() {
+                let _ = h.join();
+            }
         }
     }
 }
@@ -128,6 +135,13 @@ pub fn scale_bgra_into(dst: &mut [u8], src: &[u8], src_w: u32, src_h: u32, dst_w
     }
 }
 
+/// BGRA → RGBA in place (for PNG preview encoding).
+pub fn bgra_to_rgba(bgra: &[u8]) -> Vec<u8> {
+    bgra.chunks_exact(4)
+        .flat_map(|px| [px[2], px[1], px[0], px[3]])
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +171,11 @@ mod tests {
         let dst = scale_bgra(&[0u8; 3], 4, 4, 4, 4);
         assert_eq!(dst.len(), 64);
         assert!(dst.chunks(4).all(|px| px == [0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn bgra_rgba_swap() {
+        let rgba = bgra_to_rgba(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(rgba, vec![3, 2, 1, 4, 7, 6, 5, 8]);
     }
 }

@@ -14,8 +14,18 @@ pub struct StartPlan {
     pub encoder: String,
 }
 
-/// Validate the stream config and build everything the supervisor needs.
+/// Validate, build the plan, and create the named pipes FFmpeg reads from.
 pub fn prepare(cfg: &StreamConfig, profiles: &ProfilesConfig, usable_encoders: &[String]) -> Result<StartPlan> {
+    let plan = build_plan(cfg, profiles, usable_encoders)?;
+    pipes::create(&plan.video_pipe)?;
+    pipes::create(&plan.audio_pipe)?;
+    Ok(plan)
+}
+
+/// Pure plan construction (validation → encoder pick → argv). No filesystem side
+/// effects, so `cargo test` passes on every OS (design.md §13.1); pipe creation
+/// stays in [`prepare`] because Windows pipes are unimplemented yet (design §4.1).
+pub fn build_plan(cfg: &StreamConfig, profiles: &ProfilesConfig, usable_encoders: &[String]) -> Result<StartPlan> {
     validate_stream_key(&cfg.stream_key)?;
     let profile = profiles
         .profiles
@@ -37,8 +47,6 @@ pub fn prepare(cfg: &StreamConfig, profiles: &ProfilesConfig, usable_encoders: &
 
     let video_pipe = pipes::video_pipe_path();
     let audio_pipe = pipes::audio_pipe_path();
-    pipes::create(&video_pipe)?;
-    pipes::create(&audio_pipe)?;
 
     let ffmpeg_args = build_ffmpeg_args(
         profile,
@@ -68,7 +76,7 @@ mod tests {
     #[test]
     fn plan_builds_for_libx264() {
         let profiles = ProfilesConfig::default();
-        let plan = prepare(&cfg("test-key-123", "mid", "auto"), &profiles, &[]).unwrap();
+        let plan = build_plan(&cfg("test-key-123", "mid", "auto"), &profiles, &[]).unwrap();
         assert_eq!(plan.encoder, "libx264"); // no usable HW in empty list
         assert!(plan.ffmpeg_args.last().unwrap().ends_with("rtmp://topaz.chat/live/test-key-123"));
     }
@@ -77,15 +85,33 @@ mod tests {
     fn plan_picks_nvenc_when_usable() {
         let profiles = ProfilesConfig::default();
         let usable = vec!["h264_nvenc".to_string()];
-        let plan = prepare(&cfg("k3y", "high", "auto"), &profiles, &usable).unwrap();
+        let plan = build_plan(&cfg("k3y", "high", "auto"), &profiles, &usable).unwrap();
         assert_eq!(plan.encoder, "h264_nvenc");
     }
 
     #[test]
     fn manual_override_is_respected() {
         let profiles = ProfilesConfig::default();
-        let plan = prepare(&cfg("k3y", "mid", "libx264"), &profiles, &[]).unwrap();
+        let plan = build_plan(&cfg("k3y", "mid", "libx264"), &profiles, &[]).unwrap();
         assert_eq!(plan.encoder, "libx264");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_creates_pipes_and_builds() {
+        let profiles = ProfilesConfig::default();
+        let plan = prepare(&cfg("k3y", "mid", "auto"), &profiles, &[]).unwrap();
+        assert_eq!(plan.encoder, "libx264");
+        assert!(std::path::Path::new(&plan.video_pipe).exists());
+        assert!(std::path::Path::new(&plan.audio_pipe).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prepare_errors_until_windows_pipes_exist() {
+        let profiles = ProfilesConfig::default();
+        let err = prepare(&cfg("k3y", "mid", "auto"), &profiles, &[]).unwrap_err();
+        assert!(matches!(err, Error::NotImplemented("windows named pipe server (capture-windows spike)")));
     }
 
     #[test]

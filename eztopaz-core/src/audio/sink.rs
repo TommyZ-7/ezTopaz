@@ -159,7 +159,7 @@ mod tests {
         let path = dir.join("mix.f32");
         let file = File::create(&path).unwrap();
         let mixer = Arc::new(Mutex::new(Mixer::default()));
-        let mut sink = AudioSink::spawn(file, mixer).unwrap();
+        let sink = AudioSink::spawn(file, mixer).unwrap();
 
         sink.push("chrome", vec![0.5; 960 * 3]);
         sink.push("spotify", vec![0.25; 960]);
@@ -182,7 +182,7 @@ mod tests {
         let path = dir.join("mix.f32");
         let file = File::create(&path).unwrap();
         let mixer = Arc::new(Mutex::new(Mixer::default()));
-        let mut sink = AudioSink::spawn(file, mixer).unwrap();
+        let sink = AudioSink::spawn(file, mixer).unwrap();
 
         sink.push("a", vec![0.5; 960 * 3]);
         std::thread::sleep(Duration::from_millis(100));

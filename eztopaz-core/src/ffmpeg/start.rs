@@ -7,6 +7,7 @@ use crate::ffmpeg::args::build_ffmpeg_args;
 use crate::ffmpeg::pipes;
 use crate::ipc_types::StreamConfig;
 
+#[derive(Debug)]
 pub struct StartPlan {
     pub ffmpeg_args: Vec<String>,
     pub video_pipe: String,

@@ -21,6 +21,7 @@ fn main() {
             ipc::commands::stop_stream,
             ipc::commands::get_status,
             ipc::commands::update_audio_mix,
+            ipc::commands::get_vu,
             ipc::commands::copy_to_clipboard,
             ipc::commands::open_logs_dir,
         ])

@@ -16,20 +16,8 @@ eztopaz-core = { path = "../eztopaz-core" }
 arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
-
-[features]
-# Platform capture backends. Off by default so the core builds/tests anywhere.
-# - capture-windows: WGC screen + WASAPI process-loopback audio (Win10 2004+)
-# - capture-linux:   Portal (ashpd) + PipeWire screen/audio
-default = []
-capture-windows = []
-capture-linux = []
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.52", features = [
+# capture-windows
+windows = { version = "0.52", optional = true, features = [
   "implement",
   "Foundation",
   "Graphics",
@@ -53,3 +41,19 @@ windows = { version = "0.52", features = [
   "Win32_UI_Shell_PropertiesSystem",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# capture-linux (requires system libpipewire at build time)
+ashpd = { version = "0.7", optional = true, default-features = false, features = ["tokio"] }
+pipewire = { version = "0.8", optional = true }
+libspa = { version = "0.8", optional = true }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread"] }
+
+[features]
+# Platform capture backends. Off by default so the core builds/tests anywhere.
+# - capture-windows: WGC screen + WASAPI process-loopback audio (Win10 2004+)
+# - capture-linux:   Portal (ashpd) + PipeWire screen/audio (needs libpipewire-dev)
+default = []
+capture-windows = ["dep:windows"]
+capture-linux = ["dep:ashpd", "dep:pipewire", "dep:libspa", "dep:tokio"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

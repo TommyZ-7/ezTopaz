@@ -46,6 +46,38 @@ pub struct LogBuffer {
     pub stop: Arc<AtomicBool>,
 }
 
+/// `logs/ezTopaz-YYYY-MM-DD.log` under the config dir (design §7.1).
+pub fn open_log_file() -> Option<Arc<Mutex<std::fs::File>>> {
+    let dir = crate::config::config_dir().join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("ezTopaz-{}.log", today_iso()));
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
+    Some(Arc::new(Mutex::new(file)))
+}
+
+/// Days-since-epoch → ISO date (Howard Hinnant's civil algorithm; no chrono dep).
+fn today_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    civil_from_days((secs / 86_400) as i64)
+}
+
+fn civil_from_days(z: i64) -> String {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 #[derive(Debug)]
 pub struct StreamProcess {
     child: Child,
@@ -68,17 +100,24 @@ impl StreamProcess {
         let status = Arc::new(Mutex::new(StreamStatus { is_live: true, ..Default::default() }));
         let stderr_log = LogBuffer::default();
 
-        // stderr → log buffer (design §9)
+        // stderr → log buffer + log file (design §7.1, §9)
         if let Some(stderr) = child.stderr.take() {
             let log = stderr_log.clone();
+            let file = open_log_file();
             std::thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(|l| l.ok()) {
                     if log.stop.load(Ordering::Relaxed) {
                         break;
                     }
+                    if let Some(f) = &file {
+                        use std::io::Write;
+                        if let Ok(mut f) = f.lock() {
+                            let _ = writeln!(f, "{line}");
+                        }
+                    }
                     let mut buf = log.lines.lock().unwrap();
                     if buf.len() >= 1000 {
-                        buf.drain(..500); // ponytail: cap log buffer, rotate to file in 仕上げ
+                        buf.drain(..500); // ponytail: cap log buffer; rotate file in a later pass
                     }
                     buf.push(line);
                 }
@@ -168,5 +207,12 @@ mod tests {
         let fake = if cfg!(windows) { r"C:\definitely\missing.exe" } else { "/definitely/missing/ffmpeg".into() };
         let err = StreamProcess::spawn(Path::new(&fake), &["-version".to_string()]).unwrap_err();
         assert!(matches!(err, Error::Ffmpeg(_)));
+    }
+
+    #[test]
+    fn civil_date_known_values() {
+        assert_eq!(civil_from_days(0), "1970-01-01");
+        assert_eq!(civil_from_days(19_000), "2022-01-08");
+        assert_eq!(civil_from_days(20_628), "2026-06-24");
     }
 }

@@ -1,137 +1,106 @@
-# ezTopaz 実装完了レポート(引き継ぎ書)
+# ezTopaz 引き継ぎ書 (v0.2 — preview.01 時点)
 
-> 作成日: 2026-09-02 | 対象コミット: `cd57709`(スキャフォールド)〜 `c44356b`(最新) | 対応: 要件定義書 v0.3.2 / 詳細設計書 v0.2
+- 対象: TopazChat 配信専用ストリーマー MVP (Tauri 2 + Rust + React)
+- 本書: `docs/impl-report.md` **v0.2**。preview.01 リリース時点の状態を引き継ぐ
+- 前版: v0.1 (初回実装完了時点)。設計: `docs/design.md` (v0.2) / 要件: `docs/requirements.md` (v0.3.2)
 
----
+## 1. 現状サマリ
 
-## 1. サマリ
+- **CI 4ジョブ全グリーン** (run 33661442344 時点):
+  - `linux`: core 51テスト + `capture-linux` コンパイル検証 + フロント (tsc strict/vite/vitest 4)
+  - `windows`: core 51テスト + `capture-windows` コンパイル検証 (msvc)
+  - `build (deb)`: **pinned BtbN GPL ffmpeg 同梱**の deb
+  - `build (nsis)`: 同梱の NSIS インストーラ
+- 実装済み: 設定管理 / エンコーダprobe・引数生成 / 音声ミキサ / FramePacer / supervisor / **named pipe (Unix/Windows 両方)** / キャプチャ (Linux: Portal+PipeWire, Windows: WGC+WASAPI) / F-ST-04 自動再接続 / 配信前プレビュー / UI一式
+- **キャプチャは実機未検証**: 次の必須ステップは Wayland+PipeWire 実機での E2E (§5)
 
-要件定義書・詳細設計書に基づく MVP の実装を完了した。**純粋ロジックは全て実装+テスト済み(50件)**、キャプチャバックエンド(Linux/Windows)は**実装済みだが実機未検証**(コンパイル検証のみ)。動く状態までの残りは「CI初回実行→型エラー修正」「実機E2E」「Windows named pipe」「F-ST-04再接続」「配信前プレビュー」の5点(§7)。
+## 2. v0.1 からの変更点 (2026-09-02〜03 の CI 実装ラッシュ)
 
-## 2. 実装済み機能(設計書との対応)
-
-| 設計 § | 機能 | 実装 | 状態 |
-|---|---|---|---|
-| §3.1.3 | FramePacer / 解像度正規化 | `eztopaz-core/src/video/mod.rs`(pacer)+`video/sink.rs`(scale_bgra) | ✅ テスト済み |
-| §3.2.3 | 音声ミキサ(f32合成/VU) | `eztopaz-core/src/audio/mod.rs` | ✅ テスト済み |
-| §4.1–4.3 | VideoSink/AudioSink(パイプ書込) | `video/sink.rs`, `audio/sink.rs` | ✅ テスト済み |
-| §4.3 | FFmpeg引数生成(エンコーダ別preset/RC) | `ffmpeg/args.rs` | ✅ テスト済み |
-| §8.1 | エンコーダprobe(1フレーム実機テスト) | `ffmpeg/probe.rs` | ✅ パステスト済み(実行時テストは実機) |
-| §4.1/§9 | supervisor(spawn/kill/progress解析/ログ) | `ffmpeg/supervisor.rs`, `progress.rs` | ✅ テスト済み(RUN_E2E以外) |
-| §4.2 | named pipe | `ffmpeg/pipes.rs` | ✅ unix / ❌ Windows未実装 |
-| §5 | Tauri IPC 14コマンド | `src-tauri/src/ipc/commands.rs` | ✅ |
-| §6 | React UI(タブ/VU/プレビュー/設定/i18n) | `src/` | ✅ ビルド通過 |
-| §7 | profiles.json(atomic保存, 上限ガード) | `eztopaz-core/src/config.rs` | ✅ テスト済み |
-| §3.1/3.2 | Linuxキャプチャ(Portal+PipeWire) | `src-tauri/src/capture/linux.rs` | ⚠️ コンパイル未検証(CI待ち) |
-| §3.1/3.2 | Windowsキャプチャ(WGC+WASAPI) | `src-tauri/src/capture/windows/` | ⚠️ msvcターゲットでコンパイル検証済み、実行未検証 |
+| 項目 | 状態 | 内容 |
+|---|---|---|
+| CI 初回実行→型エラー修正 | ✅ | capture-linux 8件 (ashpd 0.7 の start() フロー / ThreadLoop unsafe+Option / pw::keys::STREAM_ROLE 不在 → MEDIA_ROLE / From<VideoInfoRaw> 不在 → pod マクロ) + Windows 3件 |
+| **Windows named pipe サーバ** (§4.1) | ✅ | `CreateNamedPipeW(OUTBOUND, byte)` + `ConnectNamedPipe`。`create`→ffmpeg spawn→`open_writer` の契約は unix FIFO と同一。**Windows の start_stream が動作可能に** |
+| **F-ST-04 自動再接続** (§9) | ✅ | get_status が異常終了検知 → リトライスレッドがバックオフ (1/2/4s) → **パイプサーバ再生成 + キャプチャ + ffmpeg を再spawn** (3回上限、`retrying` でUI表示、stop で cancel) |
+| **配信前プレビュー** (F-SC-03/§6.4) | ✅ | `start_preview`/`stop_preview`。キャプチャのみ (ffmpeg/パイプ無し) で 640x360@1fps PNG を `stream://preview` へ。UI にボタン + ja/en |
+| **FFmpeg 同梱リリースビルド** (§13.2/§4.4) | ✅ | pinned BtbN GPL ビルドを `resources/ffmpeg/` へ配置し NSIS/deb を生成。`ffmpeg_path()` が同梱バイナリを解決 |
+| **start_stream の実バグ修正** | ✅ | StreamProcess を state に保存していず get_status が必ずパニックする問題 (v0.1 時点) を修正 |
+| AppImage | ⏸ 保留 | linuxdeploy が同梱 ffmpeg に patchelf rpath 設定失敗。復活手順は ci.yml コメント参照 (linuxdeploy ラッパー --exclude-files + librsvg2-dev) |
 
 ## 3. 検証状態
 
-| 項目 | 結果 |
-|---|---|
-| `cargo test --workspace` | **50/50 OK**(警告0) |
-| `pnpm build`(tsc strict + vite) | OK |
-| `pnpm test`(vitest) | 4/4 OK |
-| `cargo check -p eztopaz --features capture-windows --target x86_64-pc-windows-msvc` | OK |
-| `cargo check -p eztopaz --features capture-linux` | **ローカル実行不可**(sudo無しでlibpipewire-devを導入できないため)→ CI で実施 |
-| 実機E2E(AC-01〜10のうち手動項目) | **未実施** |
+| 検証 | 方法 | 結果 |
+|---|---|---|
+| core テスト | `cargo test -p eztopaz-core` | 51/51, 警告0 |
+| no-feature ビルド | `cargo check -p eztopaz` | OK |
+| capture-linux | CI (`ubuntu-24.04` + libpipewire 1.0.5) | OK |
+| capture-windows | CI msvc / ローカル `cargo check --target x86_64-pc-windows-msvc` | OK |
+| フロント | `pnpm build` / `pnpm test` | OK (tsc strict / vitest 4) |
+| **実機 E2E** | Wayland+PipeWire 実機 | **未実施 — 次の必須ステップ** |
 
-**開発環境の制約(引継ぎ先であれば解消可能)**: 実装に使用したLinux機は sudo 不可・`libpipewire-dev` 未導入・`ffmpeg` コマンド無し。このため Linux capture のローカルコンパイルと E2E ができない。
+### ローカル検証 Tips
 
-## 4. 既知の未解決事項・リスク(最重要)
+- **capture-linux をローカルで**: システムの PipeWire が新しすぎると libspa 0.8 が壊れるため、
+  Ubuntu noble の `libpipewire-0.3-dev`/`libspa-0.2-dev` を展開し `PKG_CONFIG_PATH` で指す。
+  ただし bindgen 0.69 + 新しめの libclang (Arch の clang 22 等) では一部構造体が opaque 化する
+  環境問題があり、その場合は CI 結果を正とする。
+- **capture-windows をローカルで**: `rustup target add x86_64-pc-windows-msvc` →
+  `cargo check --target x86_64-pc-windows-msvc --features capture-windows` (リンク不要なので check だけ可能)。
+  `--tests` を付けると Windows 用テストコードも検査できる。
+- node しか無い環境の pnpm: `curl -fsSL https://get.pnpm.io/install.sh | sh -` (ユーザ空間に導入)。
 
-1. **Linux capture は型エラーの可能性が高い** — `pipewire-rs 0.8` / `ashpd 0.7` のAPIは実物ソース照合で書いたが、コンパイラは通していない。CI初回実行でエラーが出る前提で修正に1〜2時間を見込むこと。照合に使ったパス: `pipewire::thread_loop::ThreadLoop`(start/stop/wait/downgrade)、`Stream::connect(direction, id: Option<u32>, flags, params)`、`VideoInfoRaw::parse/size()`、`ashpd Screencast::open_pipe_wire_remote → RawFd`。
-2. **Windows named pipe サーバ未実装**(設計§4.1スパイク)— `pipes.rs` の windows 分岐は `NotImplemented`。`start_stream` は Windows で明確なエラーを返す(WGC/WASAPIキャプチャ本体は実装済みで接続待ち)。
-3. **F-ST-04 自動再接続が未接続** — `supervisor.rs` に `MAX_RETRIES` / `retry_backoff_ms()` はあるが、`commands.rs` の再接続ループは未実装。`StreamStatus.retrying` は常に `None`。
-4. **配信前プレビューが未達**(要件 F-SC-03 は「配信前」)— 現状キャプチャは配信中のみ起動するため、プレビューは配信中にしか出ない。配信前にキャプチャのみ起動するプレビューモードの追加が必要。
-5. **アプリ別ゲインUIが暫定** — `AudioSelector` の `pushMix` が全アプリに `mic.gain` を流す。ソース別スライダー(F-AU-04)のUIが必要。
-6. **FFmpeg同梱が未整備** — pinned BtbN GPLビルドの `resources/ffmpeg/` 配置と CI ステップ未作成(設計§4.4)。無い場合は `EZTOPAZ_FFMPEG` 環境変数 or PATH の ffmpeg を使用。
-7. その他小口: ログローテート未実装(メモリバッファ上限のみ)、F-CF-03 export/import 未実装(要件で優先度未割当)、プロファイル変更は配信中不可(パイプ形式固定=設計通り)、`AudioInfoRaw::parse` 後のレートが48k以外の場合のリサンプルは `resample_stereo` で対応済みだが PipeWire 側のネゴシエーション実機確認が必要。
+## 4. リリース (preview.01)
 
-## 5. ファイルマップ
+- バージョン: `0.1.0-preview01` (semver の前置ゼロ制限のため preview.01 ではなく preview01) / タグ: `preview.01` (タグ push で CI がビルド→GitHub Release 公開)
+- 成果物: `ezTopaz_*_amd64.deb` (ffmpeg 同梱) / NSIS `.exe` (同梱)
+- 同梱 ffmpeg: **pinned BtbN GPL ビルド** `autobuild-2026-09-02-13-13` (FFmpeg n8.1.2)
+  - 更新手順: ci.yml の `FFMPEG_TAG`/`FFMPEG_DIR` を更新
+  - **GPL (libx264) のため配布物に GPL 表記が必須** (設計 §11)
+- AppImage は未提供 (§2 の保留参照)。Arch 等への配布は AppImage 復活後 or AUR (手動) かソースビルド
+
+## 5. 残タスク (優先順)
+
+1. **実機 E2E** (Wayland + PipeWire 実機, 要件 AC-04/05/06/08):
+   起動 → Portalピッカー → 配信開始 → `ffprobe rtspt://topaz.chat/live/<key>` で確認。
+   ffmpeg は BtbN ビルドを `EZTOPAZ_FFMPEG` 指定が最短。問題発生時は `logs/ezTopaz-*.log` を確認。
+2. AppImage 復活 (linuxdeploy ラッパー --exclude-files + librsvg2-dev) または AUR パッケージ
+3. F-AU-04: アプリ別ゲインUI (AudioSelector にスライダー/ミュート → `update_audio_mix`。バックエンドは実装済み)
+4. 小口: `probe_encoders()` 結果キャッシュ (start_stream が全候補OKと仮定している `ponytail:` 箇所) / ログローテート / F-CF-03 export/import
+
+## 6. ファイルマップ (v0.2)
 
 ```
-docs/                    requirements.md (v0.3.2) / design.md (v0.2) / この文書
-.github/workflows/ci.yml CI: linux(capture-linux check) / windows(check) / core tests / frontend
-
-Cargo.toml               workspace (eztopaz-core + src-tauri)
-eztopaz-core/            純粋ロジック。どのOSでも cargo test 可能
-  ├─ config.rs           profiles.json, 上限ガード(2000k/320k), StreamKey検証, デフォルト4プロファイル
-  ├─ error.rs            共有エラー型
-  ├─ ipc_types.rs        Tauri共有型 (camelCase JSON)
-  ├─ audio/mod.rs        Mixer(f32加算/clamp/ゲイン/VU), resample_stereo
-  ├─ audio/sink.rs       AudioSink: ソース別キュー→ミックス→f32le書込
-  ├─ video/mod.rs        FramePacer(最終フレームfps複製)
-  ├─ video/sink.rs       VideoSink: 新着優先+fps送出, scale_bgra(レターボックス), bgra_to_rgba
-  └─ ffmpeg/
-     ├─ probe.rs         -encodersパース, 1フレームテストコマンド, 自動選択順
-     ├─ args.rs          build_ffmpeg_args(エンコーダ別preset/RC, GOP=2s, 上限ガード)
-     ├─ start.rs         StartPlan(検証→パイプ生成→argv)純粋関数+テスト
-     ├─ supervisor.rs    StreamProcess(spawn/stop/Drop-kill, -progress解析, stderr→logs/)
-     └─ pipes.rs         unix mkfifo(idempotent) / windows=NotImplemented
-
+.github/workflows/ci.yml   linux/windows テスト + build (deb/nsis) + タグで Release 公開
+eztopaz-core/              純粋ロジック (どのOSでも cargo test 可)
+  └ ffmpeg/
+     ├─ pipes.rs           名前付きパイプ。unix: mkfifo / windows: CreateNamedPipeW サーバ (§4.1)
+     ├─ start.rs           prepare (検証→パイプ生成→argv) + build_plan (純粋部)
+     └─ supervisor.rs      spawn/progress/停止/retry_backoff。ffmpeg_path は同梱バイナリ解決
 src-tauri/
-  ├─ tauri.conf.json     CSP, 960x720, bundle icon
-  ├─ src/main.rs         handler登録
-  ├─ src/ipc/commands.rs 14コマンド + AppState(start/stop/vu/mix まで含むストリーム配線)
-  └─ src/capture/
-     ├─ mod.rs           CaptureError, feature gating
-     ├─ linux.rs         portal_picker(async) / start_screen / start_audio / list_audio_devices
-     └─ windows/         screen.rs(WGC) / audio.rs(WASAPI) / enumerate.rs / mod.rs
-
-src/                     React (Vite+TS+Tailwind4+zustand+i18next)
-  ├─ store.ts            全状態+ポーリング(status 1s / vu 100ms)
-  ├─ lib/{api,types,urls}.ts   IPCラッパ / 型 / URL生成+キー検証(vitest 4件)
-  ├─ components/         Header, ScreenSelector, AudioSelector, ProfileSelector, StreamControl, SettingsModal
-  └─ locales/{ja,en}.json
+  ├─ capture/linux.rs      Portal+PipeWire。start_screen は Portal fd を dup (消費しない) + 1fps プレビュー
+  ├─ capture/windows/      WGC+WASAPI。screen.rs が stream://preview を 1fps 配信
+  └─ ipc/commands.rs       AppState (stream/session/retrying/preview) / launch_pipeline /
+                           start_stream / stop_stream / get_status(F-ST-04) / start_preview
+src/                       React UI。StreamControl にプレビューボタン、Header に「再接続中 n/3」
+src-tauri/resources/ffmpeg/ 同梱 ffmpeg 配置先 (CI が pinned ビルドを配置)
 ```
 
-## 6. コマンド
+## 7. デビエーション (設計からの決定事項)
 
-```bash
-pnpm install
-cargo test --workspace            # ロジック 50件
-pnpm build && pnpm test           # フロント
-cargo check -p eztopaz --features capture-windows --target x86_64-pc-windows-msvc  # Windows側
-cargo check -p eztopaz --features capture-linux                    # Linux側(CI or libpipewire-dev環境)
-pnpm tauri dev                    # 起動(LinuxはWaylandセッション必須)
-pnpm tauri build                  # リリース(FFmpeg同梱は未整備、§4 の6参照)
-EZTOPAZ_FFMPEG=/path/to/ffmpeg    # 同梱無し時にPATH以外を指定
-```
+- v0.1 からの分に加えて:
+  - **AppImage 保留 / Linux は deb のみ**: patchelf が同梱 ffmpeg に失敗するため (§4)。設計 §13.2 からの逸脱、復活手順は ci.yml 参照
+  - **再接続時はパイプ+キャプチャごと再spawn** (impl-report v0.1 の「パイプは既存」から設計 §4.1 準拠に変更)。Windows パイプはインスタンスが1クライアントで消費されるため必須
+  - **linux start_screen は Portal fd を消費しない**: preview → stream を再ピッカー無しで遷移させるため内部で dup
+  - **プレビュー配信はキャプチャバックエンド自身が行う** (windows は既存実装、linux は preview スレッド追加)。RT スレッドを避けるため変換は別スレッド
+- v0.1 からの既存分: workspace 分離 / キャプチャ全てRust側 / 音声パイプ f32le / vulkan 手動のみ / Portalピッカー第一動線 / Win 2004+
 
-## 7. 引き継ぎタスク(推奨順)
-
-1. **push して CI を実行** → `capture-linux` の型エラー修正(§4 の1)。`cargo fetch` 済みのソースは `~/.cargo/registry/src/*/pipewire-0.8.0` 等で参照可能。
-2. **Linux 実機 E2E**(Wayland + PipeWire + ffmpeg 必須): 起動 → Portalピッカー → 配信開始 → `ffprobe rtspt://...` で AC-04/05/06/08 を確認。ffmpeg は BtbN GPL ビルドを `EZTOPAZ_FFMPEG` で指定するのが最短。
-3. **F-ST-04 再接続**: `commands.rs` `get_status` 内で ffmpeg 異常終了を検知 → `retry_backoff_ms(retry)` 待ち → 同一 `StartPlan` で `StreamProcess::spawn` 再試行(パイプは既存、FFmpegのみ再spawn。上限3回、`StreamStatus.retrying` をUIへ)。
-4. **配信前プレビュー**(F-SC-03): `start_preview` コマンドを追加(キャプチャのみ起動、FFmpeg/パイプ無し、PreviewFrameイベント配信)。停止は stop と共通化。
-5. **Windows named pipe サーバ**(設計§4.1): `windows` crate で `CreateNamedPipeW(PIPE_ACCESS_INBOUND)` + `ConnectNamedPipe` → `pipes.rs` の windows 分岐を実装。実装すれば WGC/WASAPI がそのまま繋がる。
-6. **FFmpeg同梱 + 配布物**: CI で pinned BtbN GPL ビルドを DL → `resources/ffmpeg/` へ配置 → `pnpm tauri build` で NSIS/AppImage を出力。GPL表記(§11)を確認。
-7. **アプリ別ゲインUI**(F-AU-04): AudioSelector にソース別スライダー/ミュート → `update_audio_mix`。
-8. 小口: ログローテート、F-CF-03 export/import、`probe_encoders()` 結果のキャッシュ(start_stream が毎回全候補OKと仮定している `ponytail:` コメント箇所)。
-
-## 8. 設計からの意図的なデビエーション(決定事項)
-
-- **eztopaz-core ワークスペース分離**(設計§2.3を更新済み): プラットフォーム非依存ロジックをどのOSでもテスト可能にするため。
-- **キャプチャは全てRust側**(要件§4.4 経路A不使用、v0.3.2注記済み): FFmpeg はエンコード+RTMP専任。同梱FFmpegは公式GPLビルドで足りる(セルフビルド不要)。
-- **音声パイプは f32le**(s16leではなく): WASAPI/PipeWireネイティブがf32のため変換往復を削減。
-- **vulkan は手動選択のみ**(自動順から除外)、probeは `-encoders` 解析+1フレーム書き出しテスト(コンパイル済み≠動作するため)。
-- **Portalピッカー第一動線**: アプリ側のウィンドウ列挙は持たない(設計§3.1.2)。
-- **Windows最低バージョン 2004+**(プロセスループバックAPI)、バンドルサイズ目標 <100MB(v0.3.1緩和)。
-
-## 9. コミット履歴(実装順)
+## 8. コミット履歴 (v0.1 引き継ぎ以降)
 
 | コミット | 内容 |
 |---|---|
-| `cd57709` | スキャフォールド(workspace, Tauri 2, Vite+Tailwind+zustand+i18next) |
-| `34b6af2` | config モジュール + テスト6件 |
-| `987f240` | ffmpeg probe/args + テスト8件 |
-| `263f22d` → `0b3dd40` | mixer/FramePacer/共有型 + テスト(確定的修正) |
-| `2c81b6d` | supervisor + named pipe + IPC 14コマンド |
-| `d7c4520` | ログファイル/LICENSE/README |
-| `84e24a7` | React UI 一式 |
-| `53bb89a` → `514f542` | VideoSink/AudioSink + スケーラ/リサンプラ |
-| `d1810d7` | Windows capture(WGC+WASAPI, msvc検証) |
-| `c42a266` | Linux capture(Portal+PipeWire) + CI |
-| `e7b0e82` | UI配線(VU/preview/ライブミックス) |
-| `c44356b` | README状態更新 |
+| `9ddf313` | CI 初回失敗2件修正 (pnpm 10 / prepare を build_plan+パイプ生成に分離) |
+| `38eb46f` | StartPlan Debug / ubuntu-22.04→24.04 (libspa 0.8 は新しめのヘッダ必須) |
+| `3c9d0a7` | capture-linux 型エラー8件修正 + start_stream の StreamProcess 未保存バグ修正 |
+| `37c560c` | 残り4件 (TARGET_OBJECT feature gate / sink 移動後使用 / 未使用引数) |
+| `da88c1e` | 一括実装: Windowsパイプ / F-ST-04 / プレビュー / リリースCI |
+| `7141af6`..`e3258fa` | CI 修正 (Windowsテスト新前提 / pwsh パス / artifact パス / verbose 診断) |
+| `7c34974` | Linux を deb のみに (AppImage 保留を文書化) |

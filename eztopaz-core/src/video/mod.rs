@@ -5,6 +5,10 @@
 //! profile fps. It also owns resolution normalization: pushed frames must be
 //! exactly `w*h*4` bytes (BGRA) — capture backends scale before pushing.
 
+pub mod sink;
+
+pub use sink::{scale_bgra, scale_bgra_into, VideoSink};
+
 use crate::error::{Error, Result};
 use std::time::{Duration, Instant};
 
@@ -113,7 +117,7 @@ mod tests {
         p.push(&frame(1)).unwrap();
         p.poll(Instant::now());
         p.push(&frame(2)).unwrap();
-        let later = Instant::now() + p.interval * 2;
+        let later = t0 + p.interval * 2;
         assert_eq!(p.poll(later), Some(frame(2).as_slice()));
     }
 

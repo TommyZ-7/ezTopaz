@@ -4,9 +4,36 @@
 //! and pipe `f32le 48kHz stereo` straight to FFmpeg. VU (peak/rms) is computed
 //! per source and for the master in the same pass.
 
+pub mod sink;
+
+pub use sink::{f32le_bytes, AudioSink, MIC_ID};
+
 use crate::error::Result;
 use crate::ipc_types::{SourceGain, VuLevel, VuMeter};
 use std::collections::BTreeMap;
+
+/// Linear-interpolation resample of interleaved stereo f32 (capture devices
+/// whose mix format is not 48kHz; design §3.2.1).
+pub fn resample_stereo(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || samples.len() < 4 {
+        return samples.to_vec();
+    }
+    let in_frames = samples.len() / 2;
+    let out_frames = ((in_frames as f64) * (to_rate as f64) / (from_rate as f64)).round() as usize;
+    let mut out = Vec::with_capacity(out_frames * 2);
+    for i in 0..out_frames {
+        let pos = (i as f64) * (from_rate as f64) / (to_rate as f64);
+        let i0 = (pos as usize).min(in_frames - 1);
+        let i1 = (i0 + 1).min(in_frames - 1);
+        let t = (pos - i0 as f64) as f32;
+        for ch in 0..2 {
+            let a = samples[i0 * 2 + ch];
+            let b = samples[i1 * 2 + ch];
+            out.push(a + (b - a) * t);
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceState {
@@ -214,5 +241,16 @@ mod tests {
         assert_eq!(sanitize_gain(1.5).unwrap(), 1.5);
         assert!(sanitize_gain(-0.1).is_err());
         assert!(sanitize_gain(f32::NAN).is_err());
+    }
+
+    #[test]
+    fn resample_identity_and_rates() {
+        let src: Vec<f32> = (0..480).map(|i| i as f32 / 480.0).collect(); // 240 stereo frames
+        assert_eq!(resample_stereo(&src, 48000, 48000), src);
+        let half = resample_stereo(&src, 48000, 24000); // 240 frames → 120 frames = 240 samples
+        assert_eq!(half.len(), 240);
+        let dbl = resample_stereo(&src, 24000, 48000); // 240 frames → 480 frames = 960 samples
+        assert_eq!(dbl.len(), 960);
+        assert!(sanitize_gain(f32::INFINITY).is_err());
     }
 }

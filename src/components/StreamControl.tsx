@@ -74,6 +74,24 @@ export function StreamControl() {
       >
         {s.isLive ? `■ ${t("stream.stop")}` : `● ${t("stream.start")}`}
       </button>
+      {!s.isLive && (
+        <button
+          className={`w-full rounded border py-2 text-sm ${
+            s.previewing
+              ? "border-sky-500 text-sky-400 hover:border-sky-400"
+              : s.screen.id
+                ? "border-zinc-600 text-zinc-300 hover:border-zinc-400"
+                : "cursor-not-allowed border-zinc-800 text-zinc-600"
+          }`}
+          disabled={!s.screen.id && !s.previewing}
+          onClick={() => (s.previewing ? void s.stopPreview() : void s.startPreview())}
+        >
+          {s.previewing ? t("stream.previewStop") : t("stream.previewStart")}
+        </button>
+      )}
+      {!s.isLive && !s.screen.id && !s.previewing && (
+        <p className="text-center text-xs text-zinc-500">{t("stream.previewNeedsSource")}</p>
+      )}
       {backendMissing && (
         <p className="text-center text-xs text-amber-500">{t("stream.notAvailable")}</p>
       )}

@@ -6,9 +6,10 @@ TopazChat配信専用の軽量ストリーマー (MVP開発中)。
 ## 状態
 
 - 詳細設計: `docs/design.md` (v0.2) / 要件定義: `docs/requirements.md` (v0.3.2)
-- 実装済み: 設定管理・エンコーダprobe/引数生成・音声ミキサ・FramePacer・FFmpeg supervisor・named pipe (Unix)・UI一式・キャプチャバックエンド (Linux: Portal+PipeWire / Windows: WGC+WASAPI)
-- **キャプチャは未検証** (スパイク省略): Linux は CI (`cargo check --features capture-linux`) のみ、Windows は msvc ターゲットでのコンパイル検証のみ。実機での動作確認 (画面取得/アプリ別音声/配信E2E) が次の必須ステップ
-- Windows の named pipe サーバ (設計書 §4.1) は未実装のため、Windows での `start_stream` は明確なエラーを返す
+- 実装済み: 設定管理・エンコーダprobe/引数生成・音声ミキサ・FramePacer・FFmpeg supervisor・named pipe (Unix/Windows)・UI一式・キャプチャバックエンド (Linux: Portal+PipeWire / Windows: WGC+WASAPI)
+- 実装済み: F-ST-04 自動再接続 (3回・指数バックオフ・パイプ再生成)、配信前プレビュー (`start_preview`, 640x360@1fps)
+- **キャプチャは未検証**: CI で両プラットフォームのコンパイル検証済み。実機での動作確認 (画面取得/アプリ別音声/配信E2E) が次の必須ステップ
+- リリースビルド: CI `build` ジョブが pinned BtbN GPL ffmpeg を `src-tauri/resources/ffmpeg/` へ配置してバンドル。ローカルでビルドする場合も同様に配置 (GPL表記必須, §11)
 
 ## 開発
 

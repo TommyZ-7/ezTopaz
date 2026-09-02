@@ -37,3 +37,54 @@ jobs:
         run: cargo test -p eztopaz-core
       - name: Check capture-windows backend
         run: cargo check -p eztopaz --features capture-windows
+
+  # Release bundles with the pinned FFmpeg bundled in (design §13.2, §4.4).
+  # The BtbN build is GPL (libx264) — GPL notice must ship with artifacts (§11).
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            features: capture-linux
+            bundles: deb,appimage
+          - os: windows-latest
+            features: capture-windows
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - name: Install system deps (Tauri + PipeWire)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libpipewire-0.3-dev pkg-config
+      - name: Download pinned FFmpeg (BtbN GPL build)
+        shell: bash
+        env:
+          FFMPEG_TAG: autobuild-2026-09-02-13-13
+          FFMPEG_DIR: ffmpeg-n8.1.2-50-g1a748fe2cd
+        run: |
+          mkdir -p src-tauri/resources/ffmpeg
+          if [[ $RUNNER_OS == Linux ]]; then
+            curl -sSL -o /tmp/ffmpeg.tar.xz \
+              "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-linux64-gpl-8.1.tar.xz"
+            tar -xf /tmp/ffmpeg.tar.xz -C /tmp
+            cp "/tmp/${FFMPEG_DIR}-linux64-gpl-8.1/bin/ffmpeg" src-tauri/resources/ffmpeg/
+          else
+            curl -sSL -o /tmp/ffmpeg.zip \
+              "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-8.1.zip"
+            powershell -Command "Expand-Archive -Force /tmp/ffmpeg.zip C:/tmp-ffmpeg"
+            cp "/c/tmp-ffmpeg/${FFMPEG_DIR}-win64-gpl-8.1/bin/ffmpeg.exe" src-tauri/resources/ffmpeg/
+          fi
+      - name: Build bundles
+        run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eztopaz-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/*

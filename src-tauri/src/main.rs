@@ -19,6 +19,8 @@ fn main() {
             ipc::commands::probe_encoders,
             ipc::commands::start_stream,
             ipc::commands::stop_stream,
+            ipc::commands::start_preview,
+            ipc::commands::stop_preview,
             ipc::commands::get_status,
             ipc::commands::update_audio_mix,
             ipc::commands::get_vu,

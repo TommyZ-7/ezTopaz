@@ -38,6 +38,7 @@ interface AppState {
   // runtime
   status: StreamStatus;
   isLive: boolean;
+  previewing: boolean;
   toast: string | null;
   backendError: string | null;
   preview: string | null;
@@ -59,6 +60,8 @@ interface AppState {
   refreshStatus: () => Promise<void>;
   startStream: () => Promise<void>;
   stopStream: () => Promise<void>;
+  startPreview: () => Promise<void>;
+  stopPreview: () => Promise<void>;
 }
 
 const emptyStatus: StreamStatus = {
@@ -90,6 +93,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   status: emptyStatus,
   isLive: false,
+  previewing: false,
   toast: null,
   backendError: null,
   preview: null,
@@ -183,7 +187,7 @@ export const useStore = create<AppState>((set, get) => ({
         profileId: s.profileId,
         encoderOverride: s.encoderOverride,
       });
-      set({ status, isLive: status.isLive });
+      set({ status, isLive: status.isLive, previewing: false });
     } catch (e) {
       set({ backendError: String(e) });
     }
@@ -193,7 +197,32 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       await api.stopStream();
     } finally {
-      set({ isLive: false, status: emptyStatus });
+      set({ isLive: false, status: emptyStatus, previewing: false });
+    }
+  },
+
+  async startPreview() {
+    const s = get();
+    try {
+      await api.startPreview({
+        ingestUrl: s.ingestUrl,
+        streamKey: s.streamKey,
+        screen: s.screen,
+        audio: { mode: s.audioMode, apps: s.selectedApps, mic: s.mic },
+        profileId: s.profileId,
+        encoderOverride: s.encoderOverride,
+      });
+      set({ previewing: true });
+    } catch (e) {
+      set({ backendError: String(e) });
+    }
+  },
+
+  async stopPreview() {
+    try {
+      await api.stopPreview();
+    } finally {
+      set({ previewing: false, preview: null });
     }
   },
 }));

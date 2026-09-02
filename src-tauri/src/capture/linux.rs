@@ -10,18 +10,20 @@
 //! with libpipewire-dev); runtime needs a Wayland + PipeWire session.
 
 use super::{CaptureError, Result};
+use base64::Engine;
 use eztopaz_core::audio::AudioSink;
 use eztopaz_core::config::{Profile, ScreenTarget, ScreenTargetKind};
 use eztopaz_core::ipc_types::{AppAudio, AudioDevices, AudioSelection, DeviceInfo};
-use eztopaz_core::video::{scale_bgra, VideoSink};
+use eztopaz_core::video::{bgra_to_rgba, scale_bgra, VideoSink};
 use pipewire as pw;
 use pw::properties::properties;
 use pw::spa::param::ParamType;
 use pw::spa::pod::Pod;
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tauri::Emitter;
 
 fn err<E: std::fmt::Display>(e: E) -> CaptureError {
     CaptureError::Failed(e.to_string())
@@ -114,20 +116,27 @@ impl Drop for ScreenCapture {
 }
 
 pub fn start_screen(
-    _app: tauri::AppHandle,
-    _target: &ScreenTarget,
+    app: tauri::AppHandle,
     profile: &Profile,
     sink: VideoSink,
 ) -> Result<ScreenCapture> {
-    let state = PORTAL.lock().unwrap().take().ok_or_else(|| {
-        CaptureError::Failed("start_portal_picker() を先に実行してください".into())
-    })?;
-    let node_id = state.node_id;
+    // the portal connection is kept in PORTAL so preview → stream can reuse it
+    // without re-picking; the capture thread works on its own dup of the fd
+    let (fd, node_id) = {
+        let portal = PORTAL.lock().unwrap();
+        let portal = portal
+            .as_ref()
+            .ok_or_else(|| CaptureError::Failed("start_portal_picker() を先に実行してください".into()))?;
+        let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(libc::dup(portal.fd.as_raw_fd())) };
+        (fd, portal.node_id)
+    };
     let stop = Arc::new(AtomicBool::new(false));
     let loop_ptr = Arc::new(AtomicUsize::new(0));
     let loop_ptr2 = loop_ptr.clone();
     let stop2 = stop.clone();
     let sink2 = sink.clone();
+    let preview_slot: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+    let preview_slot2 = preview_slot.clone();
     let dst_w = profile.w;
     let dst_h = profile.h;
 
@@ -143,7 +152,7 @@ pub fn start_screen(
                 Ok(c) => c,
                 Err(e) => return eprintln!("pw video: {e}"),
             };
-            let core = match context.connect_fd(state.fd, None) {
+            let core = match context.connect_fd(fd, None) {
                 Ok(c) => c,
                 Err(e) => return eprintln!("pw video: {e}"),
             };
@@ -161,6 +170,7 @@ pub fn start_screen(
                 format: pw::spa::param::video::VideoInfoRaw,
                 sink: VideoSink,
                 stop: Arc<AtomicBool>,
+                preview_frame: Arc<Mutex<Option<Vec<u8>>>>,
                 dst_w: u32,
                 dst_h: u32,
             }
@@ -168,6 +178,7 @@ pub fn start_screen(
                 format: pw::spa::param::video::VideoInfoRaw::new(),
                 sink: sink2,
                 stop: stop2,
+                preview_frame: preview_slot2,
                 dst_w,
                 dst_h,
             };
@@ -195,7 +206,13 @@ pub fn start_screen(
                     let (w, h) = (size.width.max(1), size.height.max(1));
                     if let Some(bytes) = data.data() {
                         let frame = scale_bgra(bytes, w, h, ud.dst_w, ud.dst_h);
-                        ud.sink.push(frame);
+                        ud.sink.push(frame.clone());
+                        // park the newest frame for the 1fps preview thread
+                        if let Ok(mut slot) = ud.preview_frame.lock() {
+                            if slot.is_none() {
+                                *slot = Some(frame);
+                            }
+                        }
                     }
                 })
                 .register();
@@ -249,6 +266,46 @@ pub fn start_screen(
             tl.wait();
         })
         .map_err(err)?;
+
+    // F-SC-03 preview: 1fps 640x360 PNG → `stream://preview` (design §6.4).
+    // Runs off the PipeWire RT thread; the process callback parks the newest
+    // frame in `preview_slot` and this thread converts/emits at 1fps.
+    {
+        let slot = preview_slot.clone();
+        let app = app.clone();
+        let preview_stop = stop.clone();
+        let dst_w = dst_w;
+        let dst_h = dst_h;
+        std::thread::Builder::new()
+            .name("preview".into())
+            .spawn(move || {
+                let mut last = Instant::now() - Duration::from_secs(1);
+                loop {
+                    if preview_stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                    if last.elapsed() < Duration::from_secs(1) {
+                        continue;
+                    }
+                    let Some(frame) = slot.lock().unwrap().take() else { continue };
+                    last = Instant::now();
+                    let small = scale_bgra(&frame, dst_w, dst_h, 640, 360);
+                    let rgba = bgra_to_rgba(&small);
+                    let Some(png) = crate::capture::encode_png(&rgba, 640, 360) else { continue };
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+                    let _ = app.emit(
+                        "stream://preview",
+                        eztopaz_core::ipc_types::PreviewFrame {
+                            data_url: format!("data:image/png;base64,{b64}"),
+                            w: 640,
+                            h: 360,
+                        },
+                    );
+                }
+            })
+            .map_err(err)?;
+    }
 
     Ok(ScreenCapture { sink, stop, loop_ptr, handle: Some(handle) })
 }

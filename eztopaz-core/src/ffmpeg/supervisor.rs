@@ -20,9 +20,11 @@ pub fn ffmpeg_path() -> PathBuf {
         return PathBuf::from(p);
     }
     if let Ok(exe) = std::env::current_exe() {
+        let exe_name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+        let dir = exe.parent().unwrap();
         let candidates = [
-            exe.parent().unwrap().join("resources/ffmpeg/ffmpeg"),
-            exe.parent().unwrap().join("ffmpeg"),
+            dir.join("resources/ffmpeg").join(exe_name), // bundled (design §4.4)
+            dir.join(exe_name),
         ];
         for c in candidates {
             if c.exists() {

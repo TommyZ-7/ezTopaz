@@ -152,17 +152,17 @@ mod tests {
         let mixer = Arc::new(Mutex::new(Mixer::default()));
         let mut sink = AudioSink::spawn(file, mixer).unwrap();
 
-        sink.push("chrome", vec![0.5; 960]);
-        std::thread::sleep(Duration::from_millis(100)); // chrome alone first
+        sink.push("chrome", vec![0.5; 960 * 3]);
         sink.push("spotify", vec![0.25; 960]);
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(300));
         sink.stop();
 
         let bytes = std::fs::read(&path).unwrap();
         let samples = read_f32s(&bytes);
         assert!(!samples.is_empty(), "sink wrote mixed samples");
-        assert!(samples.iter().any(|s| (s - 0.5).abs() < 1e-6), "chrome alone before join");
+        // both mixed while spotify's block was queued; chrome alone once it starves
         assert!(samples.iter().any(|s| (s - 0.75).abs() < 1e-6), "both sources mixed");
+        assert!(samples.iter().any(|s| (s - 0.5).abs() < 1e-6), "chrome alone after join ends");
         std::fs::remove_dir_all(&dir).ok();
     }
 

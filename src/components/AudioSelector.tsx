@@ -1,9 +1,22 @@
 import { useTranslation } from "react-i18next";
 import { useStore } from "../store";
+import { api } from "../lib/api";
+
+function VuBar({ level }: { level: number }) {
+  const pct = Math.min(100, Math.round(level * 100));
+  return (
+    <div className="h-2 w-20 overflow-hidden rounded bg-zinc-700">
+      <div
+        className={`h-full ${pct > 90 ? "bg-red-500" : "bg-emerald-500"}`}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
 
 export function AudioSelector() {
   const { t } = useTranslation();
-  const { audioMode, setAudioMode, audioDevices, selectedApps, toggleApp, mic, setMic } =
+  const { audioMode, setAudioMode, audioDevices, selectedApps, toggleApp, mic, setMic, vu, isLive } =
     useStore((s) => ({
       audioMode: s.audioMode,
       setAudioMode: s.setAudioMode,
@@ -12,7 +25,23 @@ export function AudioSelector() {
       toggleApp: s.toggleApp,
       mic: s.mic,
       setMic: s.setMic,
+      vu: s.vu,
+      isLive: s.isLive,
     }));
+
+  // F-AU-03/04: live gain/mute changes reach the running mixer
+  const pushMix = () => {
+    const st = useStore.getState();
+    if (!st.isLive) return;
+    void api
+      .updateAudioMix({
+        apps: Object.fromEntries(
+          st.selectedApps.map((a) => [a, { gain: st.mic.gain, muted: false }])
+        ),
+        mic: { enabled: st.mic.enabled, muted: st.mic.muted, gain: st.mic.gain },
+      })
+      .catch(() => undefined);
+  };
 
   return (
     <section className="space-y-2">
@@ -42,6 +71,9 @@ export function AudioSelector() {
                 onChange={() => toggleApp(a.id)}
               />
               {a.label}
+              {isLive && selectedApps.includes(a.id) && (
+                <VuBar level={vu.apps[a.id]?.rms ?? 0} />
+              )}
             </label>
           ))}
           {audioDevices === null && (
@@ -86,9 +118,12 @@ export function AudioSelector() {
           step={0.05}
           value={mic.gain}
           onChange={(e) => setMic({ gain: Number(e.target.value) })}
+          onMouseUp={pushMix}
+          onTouchEnd={pushMix}
           title={t("audio.gain")}
           className="w-24"
         />
+        {isLive && mic.enabled && <VuBar level={vu.mic?.rms ?? 0} />}
       </div>
     </section>
   );

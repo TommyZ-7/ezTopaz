@@ -4,12 +4,13 @@ import { api } from "../lib/api";
 
 export function ScreenSelector() {
   const { t } = useTranslation();
-  const { displays, windows, screen, setScreen, backendError } = useStore((s) => ({
+  const { displays, windows, screen, setScreen, backendError, preview } = useStore((s) => ({
     displays: s.displays,
     windows: s.windows,
     screen: s.screen,
     setScreen: s.setScreen,
     backendError: s.backendError,
+    preview: s.preview,
   }));
   const startPortalPicker = async () => {
     try {
@@ -93,10 +94,18 @@ export function ScreenSelector() {
         <p className="text-xs text-amber-500">{t("screen.notAvailable")}</p>
       )}
 
-      {/* F-SC-03 preview placeholder — live preview lands with the capture backends */}
-      <div className="flex aspect-video w-full items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-xs text-zinc-600">
-        preview 16:9
-      </div>
+      {/* F-SC-03 preview */}
+      {preview ? (
+        <img
+          src={preview}
+          alt="preview"
+          className="aspect-video w-full rounded border border-zinc-700 bg-black object-contain"
+        />
+      ) : (
+        <div className="flex aspect-video w-full items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-xs text-zinc-600">
+          preview 16:9
+        </div>
+      )}
     </section>
   );
 }

@@ -10,6 +10,7 @@ import type {
   ScreenTarget,
   StreamConfig,
   StreamStatus,
+  VuMeter,
   WindowInfo,
 } from "./types";
 
@@ -34,6 +35,7 @@ export const api = {
   startStream: (cfg: StreamConfig) => cmd<StreamStatus>("start_stream", { cfg }),
   stopStream: () => cmd<void>("stop_stream"),
   getStatus: () => cmd<StreamStatus>("get_status"),
+  getVu: () => cmd<VuMeter>("get_vu"),
   updateAudioMix: (mix: object) => cmd<void>("update_audio_mix", { mix }),
   copyToClipboard: (text: string) => cmd<void>("copy_to_clipboard", { text }),
   openLogsDir: () => cmd<void>("open_logs_dir"),

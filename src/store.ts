@@ -8,6 +8,7 @@ import type {
   ProfilesConfig,
   ScreenTarget,
   StreamStatus,
+  VuMeter,
   WindowInfo,
 } from "./lib/types";
 
@@ -39,6 +40,10 @@ interface AppState {
   isLive: boolean;
   toast: string | null;
   backendError: string | null;
+  preview: string | null;
+  vu: VuMeter;
+  setPreview: (url: string | null) => void;
+  refreshVu: () => Promise<void>;
 
   loadAll: () => Promise<void>;
   setScreen: (s: ScreenTarget) => void;
@@ -87,6 +92,8 @@ export const useStore = create<AppState>((set, get) => ({
   isLive: false,
   toast: null,
   backendError: null,
+  preview: null,
+  vu: { apps: {}, mic: null, master: { peak: 0, rms: 0 } },
 
   async loadAll() {
     const [displays, windows, audioDevices, encoders, profiles] = await Promise.allSettled([
@@ -138,6 +145,17 @@ export const useStore = create<AppState>((set, get) => ({
   setProfiles: (profiles) => {
     set({ profiles });
     void api.saveProfiles(profiles).catch(() => undefined);
+  },
+
+  setPreview: (preview) => set({ preview }),
+
+  async refreshVu() {
+    try {
+      const vu = await api.getVu();
+      set({ vu });
+    } catch {
+      /* backend absent */
+    }
   },
 
   showToast: (msg) => {

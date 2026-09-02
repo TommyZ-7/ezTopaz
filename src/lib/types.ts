@@ -84,5 +84,22 @@ export interface EncoderInfo {
   reason: string | null;
 }
 
+export interface VuLevel {
+  peak: number;
+  rms: number;
+}
+
+export interface VuMeter {
+  apps: Record<string, VuLevel>;
+  mic: VuLevel | null;
+  master: VuLevel;
+}
+
+export interface PreviewFrame {
+  dataUrl: string;
+  w: number;
+  h: number;
+}
+
 export const MAX_VIDEO_KBPS = 2000;
 export const MAX_AUDIO_KBPS = 320;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { useStore, type Tab } from "./store";
 import { Header } from "./components/Header";
 import { ScreenSelector } from "./components/ScreenSelector";
@@ -7,6 +8,7 @@ import { AudioSelector } from "./components/AudioSelector";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { StreamControl } from "./components/StreamControl";
 import { SettingsModal } from "./components/SettingsModal";
+import type { PreviewFrame } from "./lib/types";
 
 const TABS: { id: Tab; key: string }[] = [
   { id: "screen", key: "screen.tab" },
@@ -26,7 +28,19 @@ export default function App() {
   useEffect(() => {
     void loadAll();
     const timer = setInterval(() => void refreshStatus(), 1000);
-    return () => clearInterval(timer);
+    const vuTimer = setInterval(() => void useStore.getState().refreshVu(), 100);
+    // F-SC-03: live preview frames from the capture backend (1fps)
+    let unlisten: (() => void) | null = null;
+    void listen<PreviewFrame>("stream://preview", (e) => {
+      useStore.getState().setPreview(e.payload.dataUrl);
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      clearInterval(timer);
+      clearInterval(vuTimer);
+      unlisten?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

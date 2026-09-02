@@ -115,7 +115,7 @@ impl Drop for ScreenCapture {
 
 pub fn start_screen(
     _app: tauri::AppHandle,
-    target: &ScreenTarget,
+    _target: &ScreenTarget,
     profile: &Profile,
     sink: VideoSink,
 ) -> Result<ScreenCapture> {
@@ -126,6 +126,8 @@ pub fn start_screen(
     let stop = Arc::new(AtomicBool::new(false));
     let loop_ptr = Arc::new(AtomicUsize::new(0));
     let loop_ptr2 = loop_ptr.clone();
+    let stop2 = stop.clone();
+    let sink2 = sink.clone();
     let dst_w = profile.w;
     let dst_h = profile.h;
 
@@ -164,8 +166,8 @@ pub fn start_screen(
             }
             let ud = Ud {
                 format: pw::spa::param::video::VideoInfoRaw::new(),
-                sink,
-                stop: stop.clone(),
+                sink: sink2,
+                stop: stop2,
                 dst_w,
                 dst_h,
             };
@@ -318,6 +320,7 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
     let loop_ptr = Arc::new(AtomicUsize::new(0));
     let loop_ptr2 = loop_ptr.clone();
     let stop2 = stop.clone();
+    let sink2 = sink.clone();
 
     let handle = std::thread::Builder::new()
         .name("pw-audio".into())
@@ -364,7 +367,7 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
                     id: String,
                     stop: Arc<AtomicBool>,
                 }
-                let ud = Ud { sink: sink.clone(), id: id.clone(), stop: stop2.clone() };
+                let ud = Ud { sink: sink2.clone(), id: id.clone(), stop: stop2.clone() };
 
                 let listener = stream
                     .add_local_listener_with_user_data(ud)

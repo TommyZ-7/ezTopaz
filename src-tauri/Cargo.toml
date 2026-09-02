@@ -43,7 +43,7 @@ windows = { version = "0.52", optional = true, features = [
 ] }
 # capture-linux (requires system libpipewire at build time)
 ashpd = { version = "0.7", optional = true, default-features = false, features = ["tokio"] }
-pipewire = { version = "0.8", optional = true }
+pipewire = { version = "0.8", optional = true, features = ["v0_3_44"] }
 libspa = { version = "0.8", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread"] }
 

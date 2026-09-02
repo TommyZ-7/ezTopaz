@@ -8,6 +8,15 @@
 use crate::error::{Error, Result};
 use std::time::{Duration, Instant};
 
+/// Advance to the next tick at or after `now`, collapsing backlog into one frame.
+fn advance(next: Instant, interval: Duration, now: Instant) -> Instant {
+    let mut next = next + interval;
+    while next <= now {
+        next += interval;
+    }
+    next
+}
+
 pub struct FramePacer {
     frame_size: usize,
     interval: Duration,
@@ -42,25 +51,16 @@ impl FramePacer {
         Ok(())
     }
 
-/// Advance to the next tick at or after `now`, collapsing backlog into one frame.
-fn advance(next: Instant, interval: Duration, now: Instant) -> Instant {
-    let mut next = next + interval;
-    while next <= now {
-        next += interval;
+    /// Returns the frame to emit now, if the fps tick has elapsed.
+    /// Skipped ticks collapse into one emit (never floods the pipe).
+    pub fn poll(&mut self, now: Instant) -> Option<&[u8]> {
+        let next = self.next_emit?;
+        if now < next {
+            return None;
+        }
+        self.next_emit = Some(advance(next, self.interval, now));
+        self.last_frame.as_deref()
     }
-    next
-}
-
-/// Returns the frame to emit now, if the fps tick has elapsed.
-/// Skipped ticks collapse into one emit (never floods the pipe).
-pub fn poll(&mut self, now: Instant) -> Option<&[u8]> {
-    let next = self.next_emit?;
-    if now < next {
-        return None;
-    }
-    self.next_emit = Some(advance(next, self.interval, now));
-    self.last_frame.as_deref()
-}
 
     pub fn has_frame(&self) -> bool {
         self.last_frame.is_some()
@@ -111,9 +111,9 @@ mod tests {
         let mut p = pacer();
         let t0 = Instant::now();
         p.push(&frame(1)).unwrap();
-        p.poll(t0);
+        p.poll(Instant::now());
         p.push(&frame(2)).unwrap();
-        let later = t0 + p.interval * 2;
+        let later = Instant::now() + p.interval * 2;
         assert_eq!(p.poll(later), Some(frame(2).as_slice()));
     }
 
@@ -128,11 +128,10 @@ mod tests {
     #[test]
     fn skipped_ticks_collapse() {
         let mut p = pacer();
-        let t0 = Instant::now();
         p.push(&frame(1)).unwrap();
         p.poll(Instant::now());
-        // jump far ahead: one poll yields one frame
-        let t = t0 + Duration::from_secs(10);
+        // jump far ahead: one poll yields one frame, same instant yields none
+        let t = Instant::now() + Duration::from_secs(10);
         assert!(p.poll(t).is_some());
         assert!(p.poll(t).is_none(), "same instant: no second emit");
     }
@@ -146,7 +145,7 @@ mod tests {
         let next = advance(t0, interval, now);
         assert!(next > now);
         assert!(next - now < interval);
-        // near now: exactly one interval ahead
+        // near now: exactly one interval ahead of the last tick
         let near = t0 + interval + Duration::from_millis(5);
         let next = advance(t0 + interval, interval, near);
         assert_eq!(next - (t0 + interval), interval);

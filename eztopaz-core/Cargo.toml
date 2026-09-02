@@ -1,0 +1,18 @@
+[package]
+name = "eztopaz-core"
+version = "0.1.0"
+edition = "2021"
+description = "ezTopaz pure logic: config, ffmpeg probe/args, audio mixer, frame pacer, supervisor"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+# platform capture backends (WGC/WASAPI/PipeWire/Portal) are wired in src-tauri;
+# core stays pure so `cargo test` runs anywhere.
+default = []

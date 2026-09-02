@@ -1,0 +1,24 @@
+[package]
+name = "eztopaz"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight streamer for TopazChat"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+eztopaz-core = { path = "../eztopaz-core" }
+arboard = "3"
+
+[features]
+# Platform capture backends. Off by default so the core builds/tests anywhere.
+# - capture-windows: WGC screen + WASAPI process-loopback audio (Win10 2004+)
+# - capture-linux:   Portal (ashpd) + PipeWire screen/audio
+default = []
+capture-windows = []
+capture-linux = []

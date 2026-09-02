@@ -56,18 +56,20 @@
 | 設定 | `serde_json` | `~/.config/ezTopaz/profiles.json` |
 | i18n | `i18next` (React) | ja/en |
 
-### 2.3 クレート構成 (Rust workspace)
+### 2.3 構成 (Cargo workspace)
 
 ```
 ezTopaz/
- ├─ src-tauri/          # Tauri backend
- │   ├─ main.rs
- │   ├─ capture/        # screen.rs, audio.rs, mixer.rs
- │   ├─ ffmpeg/         # supervisor.rs, probe.rs
- │   ├─ config/         # mod.rs
- │   └─ ipc/            # commands.rs
+ ├─ Cargo.toml          # workspace (eztopaz-core + src-tauri)
+ ├─ eztopaz-core/       # 純粋ロジック (config / ffmpeg probe・args / mixer / pacer / supervisor / 共有型)
+ │                      #   プラットフォーム非依存。cargo test がどのOSでも通る
+ ├─ src-tauri/          # Tauri glue + プラットフォームキャプチャ
+ │   ├─ src/main.rs
+ │   ├─ src/ipc/        # commands.rs
+ │   ├─ src/capture/    # windows.rs (feature: capture-windows) / linux.rs (feature: capture-linux)
+ │   └─ icons/
  ├─ src/                # React frontend
- └─ resources/ffmpeg/   # 同梱バイナリ (Win: ffmpeg.exe, Linux: ffmpeg)
+ └─ resources/ffmpeg/   # 同梱バイナリ (Win: ffmpeg.exe, Linux: ffmpeg) ※pinned公式GPLビルド
 ```
 
 ---

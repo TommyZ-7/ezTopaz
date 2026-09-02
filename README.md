@@ -6,9 +6,9 @@ TopazChat配信専用の軽量ストリーマー (MVP開発中)。
 ## 状態
 
 - 詳細設計: `docs/design.md` (v0.2) / 要件定義: `docs/requirements.md` (v0.3.2)
-- 実装済み: 設定管理・エンコーダprobe/引数生成・音声ミキサ・FramePacer・FFmpeg supervisor・named pipe (Unix)・UI一式
-- 未実装 (設計書 §14 スパイク後): 画面/音声キャプチャバックエンド (WGC+WASAPI / Portal+PipeWire)。`capture-linux` / `capture-windows` feature 配下に配置する
-  - キャプチャなしビルドでは `start_stream` は検証後に明確なエラーを返す
+- 実装済み: 設定管理・エンコーダprobe/引数生成・音声ミキサ・FramePacer・FFmpeg supervisor・named pipe (Unix)・UI一式・キャプチャバックエンド (Linux: Portal+PipeWire / Windows: WGC+WASAPI)
+- **キャプチャは未検証** (スパイク省略): Linux は CI (`cargo check --features capture-linux`) のみ、Windows は msvc ターゲットでのコンパイル検証のみ。実機での動作確認 (画面取得/アプリ別音声/配信E2E) が次の必須ステップ
+- Windows の named pipe サーバ (設計書 §4.1) は未実装のため、Windows での `start_stream` は明確なエラーを返す
 
 ## 開発
 

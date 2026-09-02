@@ -6,6 +6,8 @@
 
 use arboard::Clipboard;
 use eztopaz_core::config::{self, validate_bitrate, ProfilesConfig, MAX_AUDIO_KBPS, MAX_VIDEO_KBPS};
+// Error is only constructed on the non-capture-linux fallback paths
+#[cfg_attr(feature = "capture-linux", allow(unused_imports))]
 use eztopaz_core::error::Error;
 use eztopaz_core::ffmpeg::probe;
 use eztopaz_core::ffmpeg::start::prepare;
@@ -192,11 +194,16 @@ pub fn start_stream(
     state: State<'_, AppState>,
     cfg: StreamConfig,
 ) -> CmdResult<StreamStatus> {
+    // guard is held for the whole call so concurrent start_stream can't double-spawn
+    // (mut is only used on the capture-linux path)
+    #[cfg_attr(not(feature = "capture-linux"), allow(unused_mut))]
     let mut guard = state.stream.lock().unwrap();
     if guard.is_some() {
         return Err("stream already running".into());
     }
     let profiles = config::load(&config::config_path()).map_err(err)?;
+    // profile/mixer are consumed by the capture-linux backend only
+    #[cfg_attr(not(feature = "capture-linux"), allow(unused_variables))]
     let profile = profiles
         .profiles
         .get(&cfg.profile_id)
@@ -207,6 +214,7 @@ pub fn start_stream(
     let plan = prepare(&cfg, &profiles, &usable).map_err(err)?;
 
     // initial mixer state from the UI selection
+    #[cfg_attr(not(feature = "capture-linux"), allow(unused_variables))]
     let mixer = Arc::new(Mutex::new(eztopaz_core::audio::Mixer {
         apps: cfg
             .audio
@@ -268,6 +276,11 @@ pub fn start_stream(
         *state.screen.lock().unwrap() = Some(screen);
         *state.audio_cap.lock().unwrap() = Some(audio_cap);
         *state.active_mixer.lock().unwrap() = Some(mixer);
+
+        // store the process so stop_stream/get_status can manage it
+        let status = proc.status();
+        *guard = Some(proc);
+        return Ok(status);
     }
     #[cfg(not(feature = "capture-linux"))]
     {
@@ -275,14 +288,14 @@ pub fn start_stream(
         // windows: capture code is compiled but needs the named-pipe server spike
         // before frames can flow; refuse rather than stream frozen pipes.
         let _ = &plan;
+        // unreachable in practice (prepare() fails first on this platform);
+        // drop explicitly so the spawned ffmpeg is reaped instead of leaked
+        drop(proc);
         return Err(Error::NotImplemented(
             "named pipe server for this platform (see design.md §4.1 spike)",
         ))
         .map_err(err);
     }
-
-    let status = guard.as_ref().unwrap().status();
-    Ok(status)
 }
 
 #[tauri::command]
@@ -322,6 +335,8 @@ pub fn get_status(state: State<'_, AppState>) -> StreamStatus {
 
 #[tauri::command]
 pub fn get_vu(state: State<'_, AppState>) -> VuMeter {
+    #[cfg(not(feature = "capture-linux"))]
+    let _ = state;
     #[cfg(feature = "capture-linux")]
     if let Some(cap) = state.audio_cap.lock().unwrap().as_ref() {
         if let Some(sink) = &cap.sink {

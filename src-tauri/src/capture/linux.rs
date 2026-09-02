@@ -18,6 +18,7 @@ use pipewire as pw;
 use pw::properties::properties;
 use pw::spa::param::ParamType;
 use pw::spa::pod::Pod;
+use std::os::fd::FromRawFd;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,7 +55,14 @@ pub async fn portal_picker() -> Result<ScreenTarget> {
         )
         .await
         .map_err(err)?;
-    let streams = request.response().await.map_err(err)?.streams().to_vec();
+    // ashpd 0.7: select_sources' response is empty; the picker result (streams)
+    // is delivered by the Start request (ashpd screencast module docs).
+    request.response().map_err(err)?;
+    let started = screencast
+        .start(&session, &ashpd::WindowIdentifier::default())
+        .await
+        .map_err(err)?;
+    let streams = started.response().map_err(err)?.streams().to_vec();
     let Some(stream) = streams.first() else {
         return Err(CaptureError::Failed("portal picker returned no stream".into()));
     };
@@ -124,7 +132,7 @@ pub fn start_screen(
     let handle = std::thread::Builder::new()
         .name("pw-video".into())
         .spawn(move || {
-            let tl = match pw::thread_loop::ThreadLoop::new("eztopaz-video", None) {
+            let tl = match unsafe { pw::thread_loop::ThreadLoop::new(Some("eztopaz-video"), None) } {
                 Ok(t) => t,
                 Err(e) => return eprintln!("pw video: {e}"),
             };
@@ -140,7 +148,7 @@ pub fn start_screen(
             let props = properties! {
                 *pw::keys::MEDIA_TYPE => "Video",
                 *pw::keys::MEDIA_CATEGORY => "Capture",
-                *pw::keys::STREAM_ROLE => "Screen",
+                *pw::keys::MEDIA_ROLE => "Screen",
             };
             let stream = match pw::stream::Stream::new(&core, "eztopaz-video", props) {
                 Ok(s) => s,
@@ -193,14 +201,28 @@ pub fn start_screen(
                 return eprintln!("pw video: {e}");
             }
 
-            // negotiate BGRA at the source size
-            let mut info = pw::spa::param::video::VideoInfoRaw::new();
-            info.set_format(pw::spa::param::video::VideoFormat::BGRA);
-            let obj = pw::spa::pod::Object {
-                type_: pw::spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
-                id: ParamType::EnumFormat.as_raw(),
-                properties: info.into(),
-            };
+            // negotiate BGRA; source size/framerate come back in the negotiated
+            // Format (param_changed above). libspa 0.8 has no From<VideoInfoRaw>
+            // impl for Vec<Property>, so build the pod with the official macros.
+            let obj = pw::spa::pod::object!(
+                pw::spa::utils::SpaTypes::ObjectParamFormat,
+                ParamType::EnumFormat,
+                pw::spa::pod::property!(
+                    pw::spa::param::format::FormatProperties::MediaType,
+                    Id,
+                    pw::spa::param::format::MediaType::Video
+                ),
+                pw::spa::pod::property!(
+                    pw::spa::param::format::FormatProperties::MediaSubtype,
+                    Id,
+                    pw::spa::param::format::MediaSubtype::Raw
+                ),
+                pw::spa::pod::property!(
+                    pw::spa::param::format::FormatProperties::VideoFormat,
+                    Id,
+                    pw::spa::param::video::VideoFormat::BGRA
+                ),
+            );
             let values: Vec<u8> = match pw::spa::pod::serialize::PodSerializer::serialize(
                 std::io::Cursor::new(Vec::new()),
                 &pw::spa::pod::Value::Object(obj),
@@ -300,7 +322,7 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
     let handle = std::thread::Builder::new()
         .name("pw-audio".into())
         .spawn(move || {
-            let tl = match pw::thread_loop::ThreadLoop::new("eztopaz-audio", None) {
+            let tl = match unsafe { pw::thread_loop::ThreadLoop::new(Some("eztopaz-audio"), None) } {
                 Ok(t) => t,
                 Err(e) => return eprintln!("pw audio: {e}"),
             };
@@ -426,7 +448,7 @@ pub fn list_audio_devices() -> Result<AudioDevices> {
         is_default: true,
     }];
 
-    let tl = match pw::thread_loop::ThreadLoop::new("eztopaz-probe", None) {
+    let tl = match unsafe { pw::thread_loop::ThreadLoop::new(Some("eztopaz-probe"), None) } {
         Ok(t) => t,
         Err(e) => return Err(err(e)),
     };

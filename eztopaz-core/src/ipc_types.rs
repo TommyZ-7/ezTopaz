@@ -1,6 +1,6 @@
 //! Shared IPC types (design.md §5.3). Serialized over Tauri IPC (camelCase JSON).
 
-use crate::config::{MicSource, ScreenTarget, ScreenTargetKind};
+pub use crate::config::{MicSource, ScreenTarget, ScreenTargetKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -161,5 +161,4 @@ pub struct EncoderInfo {
     pub reason: Option<String>,
 }
 
-/// `screen.type` mirrors config::ScreenTargetKind; re-exported for IPC convenience.
-pub type ScreenKind = ScreenTargetKind;
+

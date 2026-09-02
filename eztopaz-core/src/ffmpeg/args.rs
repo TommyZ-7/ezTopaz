@@ -1,7 +1,7 @@
 //! FFmpeg command-line construction (design.md §4.3).
 
-use crate::config::{validate_bitrate, Profile, MAX_AUDIO_KBPS, MAX_VIDEO_KBPS};
-use crate::error::{Error, Result};
+use crate::config::{validate_bitrate, Profile};
+use crate::error::Result;
 
 /// Per-encoder `-preset` and rate-control flags.
 /// `p1` is an NVENC-family preset name; qsv/amf/vaapi reject it (design v0.2 §4.3).
@@ -94,7 +94,8 @@ pub const LIMITS_NOTE: &str = "Topaz limits: video <= 2000kbps, audio <= 320kbps
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::default_profiles;
+    use crate::config::{default_profiles, MAX_AUDIO_KBPS, MAX_VIDEO_KBPS};
+    use crate::error::Error;
 
     fn profile(id: &str) -> Profile {
         default_profiles().get(id).unwrap().clone()

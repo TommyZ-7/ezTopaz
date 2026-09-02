@@ -22,3 +22,6 @@ arboard = "3"
 default = []
 capture-windows = []
 capture-linux = []
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

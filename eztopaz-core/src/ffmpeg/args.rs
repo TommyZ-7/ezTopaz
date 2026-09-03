@@ -122,6 +122,22 @@ pub fn transport_for_encoder(encoder: &str) -> Transport {
     }
 }
 
+/// Plan-level transport: `hw_direct` opts HW encoders into explicit GPU
+/// upload (`HwDirect`); software encoders and the default keep
+/// [`transport_for_encoder`].
+pub fn transport_for_plan(encoder: &str, hw_direct: bool) -> Transport {
+    if hw_direct {
+        match encoder {
+            "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_vaapi" | "h264_vulkan" => {
+                Transport::HwDirect
+            }
+            _ => transport_for_encoder(encoder),
+        }
+    } else {
+        transport_for_encoder(encoder)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_ffmpeg_args_with_transport(
     profile: &Profile,
@@ -435,5 +451,15 @@ mod tests {
         let pipe = build("mid", "h264_nvenc");
         assert!(!pipe.contains(&"-init_hw_device".to_string()));
         assert!(!pipe.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn transport_for_plan_gates_hwdirect() {
+        assert_eq!(transport_for_plan("h264_nvenc", false), Transport::PipeNv12);
+        assert_eq!(transport_for_plan("h264_nvenc", true), Transport::HwDirect);
+        assert_eq!(transport_for_plan("h264_qsv", true), Transport::HwDirect);
+        // software falls back even with the flag on
+        assert_eq!(transport_for_plan("libx264", true), Transport::PipeBgra);
+        assert_eq!(transport_for_plan("libx264", false), Transport::PipeBgra);
     }
 }

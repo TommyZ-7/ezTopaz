@@ -13,6 +13,13 @@ pub struct StreamConfig {
     pub audio: AudioSelection,
     pub profile_id: String,
     pub encoder_override: String,
+    /// Opt into explicit GPU upload (`Transport::HwDirect`: `-init_hw_device`
+    /// + `-vf hwupload*`). Default false keeps the implicit-upload pipe path.
+    pub hw_direct: bool,
+    /// Direct device video input (`Some("ddagrab")` = Windows fullscreen via
+    /// ffmpeg's ddagrab; video pipe bypassed, audio still piped).
+    /// `None` (default) keeps the Rust capture → pipe path.
+    pub direct_input: Option<String>,
 }
 
 impl Default for StreamConfig {
@@ -24,6 +31,8 @@ impl Default for StreamConfig {
             audio: AudioSelection::default(),
             profile_id: "mid".into(),
             encoder_override: "auto".into(),
+            hw_direct: false,
+            direct_input: None,
         }
     }
 }

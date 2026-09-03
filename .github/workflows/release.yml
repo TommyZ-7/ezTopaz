@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    tags: ['preview.*']
   pull_request:
     paths:
       - 'src-tauri/**'
@@ -11,17 +13,11 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/release.yml'
-  # Release runs ONLY on explicit instruction (no tag auto-trigger).
-  # Usage: gh workflow run Release --ref main -f tag=preview.04
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag to build and publish (e.g. preview.04). The tag must already exist.'
-        required: true
 
-# Manual dispatches for different tags must not cancel each other
+# PRの連続pushは旧実行をキャンセルして節約。タグはrefが一意のため実質影響なし
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -44,15 +40,9 @@ jobs:
             bundles: nsis
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write # 手動実行時に GitHub Release を作成/更新するため
+      contents: write # タグ push 時に GitHub Release を作成/更新するため
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout release tag (dispatch only)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          [[ "${{ inputs.tag }}" == preview.* ]] || { echo "tag must match preview.*"; exit 1; }
-          git fetch --tags --force
-          git checkout "${{ inputs.tag }}"
       - uses: dtolnay/rust-toolchain@stable
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
@@ -96,13 +86,13 @@ jobs:
           EOF
       - name: Build bundles
         run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
-      - name: Publish release (manual dispatch only)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
         shell: bash
         run: |
+          TAG="${GITHUB_REF_NAME}"
           NOTES="MVP preview build. FFmpeg (BtbN GPL build) is bundled — the GPL notice must ship with the artifacts (design §11). Windows: NSIS installer. Linux: deb (AppImage is planned for a later release)."
           # matrix の2ジョブが同じ Release へ追記するため冪等に
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \

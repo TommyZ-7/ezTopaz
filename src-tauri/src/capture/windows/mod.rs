@@ -9,10 +9,12 @@
 //! --features capture-windows`; runtime behavior needs a Windows machine.
 
 mod audio;
+mod direct;
 mod enumerate;
 mod screen;
 
 pub use audio::start_audio;
+pub use direct::ScreenHandle;
 pub use enumerate::{list_audio_devices, list_displays, list_windows};
 pub use screen::{start_screen, ScreenCapture};
 

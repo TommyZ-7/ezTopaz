@@ -48,8 +48,11 @@ impl VideoSink {
         let stop2 = stop.clone();
         let interval = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
         let convert_nv12 =
-            matches!(transport, crate::ffmpeg::args::Transport::PipeNv12)
-                && w % 2 == 0
+            matches!(
+                transport,
+                crate::ffmpeg::args::Transport::PipeNv12
+                    | crate::ffmpeg::args::Transport::HwDirect
+            ) && w % 2 == 0
                 && h % 2 == 0;
 
         let handle = std::thread::Builder::new()

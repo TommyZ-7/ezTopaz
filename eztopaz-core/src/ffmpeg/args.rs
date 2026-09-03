@@ -122,6 +122,22 @@ pub fn transport_for_encoder(encoder: &str) -> Transport {
     }
 }
 
+/// Plan-level transport: `hw_direct` opts HW encoders into explicit GPU
+/// upload (`HwDirect`); software encoders and the default keep
+/// [`transport_for_encoder`].
+pub fn transport_for_plan(encoder: &str, hw_direct: bool) -> Transport {
+    if hw_direct {
+        match encoder {
+            "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_vaapi" | "h264_vulkan" => {
+                Transport::HwDirect
+            }
+            _ => transport_for_encoder(encoder),
+        }
+    } else {
+        transport_for_encoder(encoder)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_ffmpeg_args_with_transport(
     profile: &Profile,
@@ -133,15 +149,41 @@ pub fn build_ffmpeg_args_with_transport(
     transport: &Transport,
 ) -> Result<Vec<String>> {
     validate_bitrate(profile.v_kbps, profile.a_kbps)?;
-    let (preset, rc) = preset_and_rc(encoder);
-    let gop = profile.gop(); // F-EN-05: 2 seconds
-
     let mut args: Vec<String> = vec![
         "-hide_banner".into(),
         "-loglevel".into(),
         "info".into(),
         "-progress".into(),
         "pipe:1".into(),
+    ];
+    // HwDirect: GPU device init right after `-progress pipe:1`
+    // (C10 Windows / C11 Linux). Pipe transports emit nothing here.
+    if *transport == Transport::HwDirect {
+        args.extend(crate::ffmpeg::hw::init_hw_device_args(
+            &crate::ffmpeg::hw::HwBackend::for_encoder(encoder),
+        ));
+    }
+    args.extend(pipe_video_input_args(profile, transport, video_pipe));
+    args.extend(pipe_audio_input_args(audio_pipe));
+    args.extend(encoder_output_args(
+        profile,
+        encoder,
+        ingest_url,
+        stream_key,
+        transport,
+        None,
+    )?);
+    Ok(args)
+}
+
+/// Pipe video input block (`-fflags` … `-i <pipe>`). Shared by the pipe
+/// path and the direct-input path (which replaces only this block).
+pub fn pipe_video_input_args(
+    profile: &Profile,
+    transport: &Transport,
+    video_pipe: &str,
+) -> Vec<String> {
+    vec![
         "-fflags".into(),
         "nobuffer".into(),
         "-probesize".into(),
@@ -160,6 +202,13 @@ pub fn build_ffmpeg_args_with_transport(
         profile.fps.to_string(),
         "-i".into(),
         video_pipe.into(),
+    ]
+}
+
+/// Pipe audio input block (`-thread_queue_size` … `-i <pipe>`).
+/// The mixed `f32le` feed is identical on every transport.
+pub fn pipe_audio_input_args(audio_pipe: &str) -> Vec<String> {
+    vec![
         "-thread_queue_size".into(),
         "512".into(),
         "-f".into(),
@@ -170,6 +219,26 @@ pub fn build_ffmpeg_args_with_transport(
         "2".into(),
         "-i".into(),
         audio_pipe.into(),
+    ]
+}
+
+/// Encoder + audio + muxer output block (`-c:v` … output URL).
+/// `vf_override` replaces the [`crate::ffmpeg::hw::hw_upload_filter`] chain
+/// (used by direct device inputs whose frames are already on-GPU).
+#[allow(clippy::too_many_arguments)]
+pub fn encoder_output_args(
+    profile: &Profile,
+    encoder: &str,
+    ingest_url: &str,
+    stream_key: &str,
+    transport: &Transport,
+    vf_override: Option<&str>,
+) -> Result<Vec<String>> {
+    validate_bitrate(profile.v_kbps, profile.a_kbps)?;
+    let (preset, rc) = preset_and_rc(encoder);
+    let gop = profile.gop(); // F-EN-05: 2 seconds
+
+    let mut args: Vec<String> = vec![
         "-c:v".into(),
         encoder.into(),
         "-pix_fmt".into(),
@@ -195,22 +264,19 @@ pub fn build_ffmpeg_args_with_transport(
         "-bufsize".into(),
         format!("{}k", profile.v_kbps * 2),
     ];
-    // HwDirect: GPU device init right after `-progress pipe:1`
-    // (C10 Windows / C11 Linux). Pipe transports emit nothing here.
-    if *transport == Transport::HwDirect {
-        let init = crate::ffmpeg::hw::init_hw_device_args(
-            &crate::ffmpeg::hw::HwBackend::for_encoder(encoder),
-        );
-        args.splice(5..5, init);
-    }
     if let Some(p) = preset {
         args.extend(["-preset".into(), p.into()]);
     }
     args.extend(rc.iter().map(|s| s.to_string()));
     // Optional GPU upload when the caller selected a HW backend explicitly
     // (see `ffmpeg::hw::hw_upload_filter`; default pipe path stays CPU).
-    if let Some(hw_filter) = crate::ffmpeg::hw::hw_upload_filter(encoder, transport) {
-        args.extend(["-vf".into(), hw_filter]);
+    match vf_override {
+        Some(vf) => args.extend(["-vf".into(), vf.to_string()]),
+        None => {
+            if let Some(hw_filter) = crate::ffmpeg::hw::hw_upload_filter(encoder, transport) {
+                args.extend(["-vf".into(), hw_filter]);
+            }
+        }
     }
     args.extend([
         "-c:a".into(),
@@ -435,5 +501,15 @@ mod tests {
         let pipe = build("mid", "h264_nvenc");
         assert!(!pipe.contains(&"-init_hw_device".to_string()));
         assert!(!pipe.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn transport_for_plan_gates_hwdirect() {
+        assert_eq!(transport_for_plan("h264_nvenc", false), Transport::PipeNv12);
+        assert_eq!(transport_for_plan("h264_nvenc", true), Transport::HwDirect);
+        assert_eq!(transport_for_plan("h264_qsv", true), Transport::HwDirect);
+        // software falls back even with the flag on
+        assert_eq!(transport_for_plan("libx264", true), Transport::PipeBgra);
+        assert_eq!(transport_for_plan("libx264", false), Transport::PipeBgra);
     }
 }

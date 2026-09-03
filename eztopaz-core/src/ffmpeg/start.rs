@@ -3,7 +3,7 @@
 
 use crate::config::{validate_stream_key, ProfilesConfig};
 use crate::error::{Error, Result};
-use crate::ffmpeg::args::{build_ffmpeg_args_with_transport, transport_for_encoder, Transport};
+use crate::ffmpeg::args::{build_ffmpeg_args_with_transport, transport_for_plan, Transport};
 use crate::ffmpeg::pipes;
 use crate::ipc_types::StreamConfig;
 
@@ -50,7 +50,7 @@ pub fn build_plan(cfg: &StreamConfig, profiles: &ProfilesConfig, usable_encoders
     let video_pipe = pipes::video_pipe_path();
     let audio_pipe = pipes::audio_pipe_path();
 
-    let transport = transport_for_encoder(&encoder);
+    let transport = transport_for_plan(&encoder, cfg.hw_direct);
     let ffmpeg_args = build_ffmpeg_args_with_transport(
         profile,
         &encoder,
@@ -91,6 +91,19 @@ mod tests {
         let usable = vec!["h264_nvenc".to_string()];
         let plan = build_plan(&cfg("k3y", "high", "auto"), &profiles, &usable).unwrap();
         assert_eq!(plan.encoder, "h264_nvenc");
+    }
+
+    #[test]
+    fn hw_direct_opt_in_selects_hwdirect_transport() {
+        let profiles = ProfilesConfig::default();
+        let mut c = cfg("k3y", "mid", "h264_nvenc");
+        c.hw_direct = true;
+        let plan = build_plan(&c, &profiles, &["h264_nvenc".to_string()]).unwrap();
+        assert_eq!(plan.transport, crate::ffmpeg::args::Transport::HwDirect);
+        assert!(plan.ffmpeg_args.contains(&"-init_hw_device".to_string()));
+        // default stays on implicit-upload pipe
+        let plain = build_plan(&cfg("k3y", "mid", "h264_nvenc"), &profiles, &[]).unwrap();
+        assert_eq!(plain.transport, crate::ffmpeg::args::Transport::PipeNv12);
     }
 
     #[test]

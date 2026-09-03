@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "eztopaz"
-version = "0.1.0-preview05"
+version = "0.1.0-preview06"
 dependencies = [
  "arboard",
  "ashpd",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "eztopaz-core"
-version = "0.1.0-preview05"
+version = "0.1.0-preview06"
 dependencies = [
  "libc",
  "serde",

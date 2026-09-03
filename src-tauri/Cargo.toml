@@ -1,6 +1,6 @@
 [package]
 name = "eztopaz"
-version = "0.1.0-preview07"
+version = "0.1.0-preview08"
 edition = "2021"
 description = "Lightweight streamer for TopazChat"
 

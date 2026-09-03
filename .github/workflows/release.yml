@@ -61,20 +61,20 @@ jobs:
         shell: bash
         env:
           FFMPEG_TAG: autobuild-2026-09-02-13-13
-          FFMPEG_DIR: ffmpeg-n8.1.2-50-g1a748fe2cd
+          FFMPEG_DIR: ffmpeg-n9.0.1-11-ge47273f4d9
         run: |
           mkdir -p src-tauri/resources/ffmpeg
           if [[ $RUNNER_OS == Linux ]]; then
             curl -sSL -o /tmp/ffmpeg.tar.xz \
-              "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-linux64-gpl-8.1.tar.xz"
+              "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-linux64-gpl-9.0.tar.xz"
             tar -xf /tmp/ffmpeg.tar.xz -C /tmp
-            cp "/tmp/${FFMPEG_DIR}-linux64-gpl-8.1/bin/ffmpeg" src-tauri/resources/ffmpeg/
+            cp "/tmp/${FFMPEG_DIR}-linux64-gpl-9.0/bin/ffmpeg" src-tauri/resources/ffmpeg/
           else
             curl -sSL -o ffmpeg.zip \
-              "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-8.1.zip"
+              "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-9.0.zip"
             # PowerShell cannot see Git-Bash's /tmp; use a workspace-relative path
             powershell -Command "Expand-Archive -Force ffmpeg.zip C:/tmp-ffmpeg"
-            cp "/c/tmp-ffmpeg/${FFMPEG_DIR}-win64-gpl-8.1/bin/ffmpeg.exe" src-tauri/resources/ffmpeg/
+            cp "/c/tmp-ffmpeg/${FFMPEG_DIR}-win64-gpl-9.0/bin/ffmpeg.exe" src-tauri/resources/ffmpeg/
           fi
           # GPL provenance: record the exact build inside the bundle (design §11)
           mkdir -p src-tauri/resources/licenses
@@ -82,8 +82,8 @@ jobs:
           Bundled FFmpeg build provenance (generated at bundle time)
           FFMPEG_TAG=${FFMPEG_TAG}
           FFMPEG_DIR=${FFMPEG_DIR}
-          Linux: https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-linux64-gpl-8.1.tar.xz
-          Windows: https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-8.1.zip
+          Linux: https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-linux64-gpl-9.0.tar.xz
+          Windows: https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-9.0.zip
           Build scripts and sources: https://github.com/BtbN/FFmpeg-Builds
           Upstream FFmpeg: https://github.com/FFmpeg/FFmpeg / https://ffmpeg.org/download.html
           License: GPL-2.0 (see GPL-2.0.txt in this directory)

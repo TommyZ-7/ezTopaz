@@ -406,12 +406,29 @@ fn stop_capture_backends(state: &AppState) {
     }
 }
 
-fn stop_preview_impl(state: &AppState) {
-    let _ = state;
-    #[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
-    if let Some(mut p) = state.preview.lock().unwrap().take() {
+/// Take the preview slot's mutex guard across stop so concurrent
+/// start_preview/stop_preview commands serialize (Tauri invokes run on a
+/// thread pool): stop + replace + store is atomic, never interleaved.
+#[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
+fn take_preview_slot(
+    state: &AppState,
+) -> std::sync::MutexGuard<'_, Option<crate::capture::ScreenCapture>> {
+    let mut slot = state.preview.lock().unwrap();
+    if let Some(mut p) = slot.take() {
         p.stop();
     }
+    slot
+}
+
+fn stop_preview_impl(state: &AppState) {
+    #[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
+    {
+        // take() + stop() under one guard; the old capture is fully joined
+        // before this returns, so a following start cannot overlap it.
+        let _slot = take_preview_slot(state);
+    }
+    #[cfg(not(any(feature = "capture-linux", feature = "capture-windows")))]
+    let _ = state;
 }
 
 #[tauri::command]
@@ -619,7 +636,9 @@ pub fn start_preview(
         if state.stream.lock().unwrap().is_some() {
             return Err("stream already running".into());
         }
-        stop_preview_impl(&state);
+        // Hold the preview slot across stop + replace + store so a concurrent
+        // start_preview/stop_preview cannot interleave and leak a capture.
+        let mut slot = take_preview_slot(&state);
         let profiles = config::load(&config::config_path()).map_err(err)?;
         let profile = profiles
             .profiles
@@ -651,7 +670,7 @@ pub fn start_preview(
                 .map_err(err)?
             }
         };
-        *state.preview.lock().unwrap() = Some(screen);
+        *slot = Some(screen);
         Ok(())
     }
 }

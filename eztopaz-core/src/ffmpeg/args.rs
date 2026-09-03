@@ -73,9 +73,9 @@ pub fn build_ffmpeg_args(
 
 /// Video transport into ffmpeg. `PipeBgra` is the historical default;
 /// `PipeNv12` carries `w*h*3/2`-byte frames (see `video::nv12`) so HW
-/// encoders skip the BGRA→YUV swscale. `HwDirect` is reserved for the
-/// zero-copy capture path (`ffmpeg::hw`) and currently falls back to pipe
-/// args until the capture backend is wired.
+/// encoders skip the BGRA→YUV swscale. `HwDirect` is pipe NV12 + explicit
+/// GPU upload (`-init_hw_device` + `-vf hwupload*`, see `ffmpeg::hw`);
+/// the capture backend still feeds the pipe, so no texture-sharing rewrite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     PipeBgra,
@@ -195,6 +195,14 @@ pub fn build_ffmpeg_args_with_transport(
         "-bufsize".into(),
         format!("{}k", profile.v_kbps * 2),
     ];
+    // HwDirect: GPU device init right after `-progress pipe:1`
+    // (C10 Windows / C11 Linux). Pipe transports emit nothing here.
+    if *transport == Transport::HwDirect {
+        let init = crate::ffmpeg::hw::init_hw_device_args(
+            &crate::ffmpeg::hw::HwBackend::for_encoder(encoder),
+        );
+        args.splice(5..5, init);
+    }
     if let Some(p) = preset {
         args.extend(["-preset".into(), p.into()]);
     }
@@ -406,5 +414,26 @@ mod tests {
             .map(|(i, _)| sw[i + 1].as_str())
             .collect();
         assert_eq!(pix_fmts, vec!["nv12", "yuv420p"]);
+    }
+
+    #[test]
+    fn hwdirect_adds_device_init_and_upload() {
+        let p = profile("mid");
+        let args = build_ffmpeg_args_with_transport(
+            &p,
+            "h264_nvenc",
+            "rtmp://topaz.chat/live",
+            "k",
+            "v",
+            "a",
+            &Transport::HwDirect,
+        )
+        .unwrap();
+        assert_eq!(find(&args, "-init_hw_device"), "cuda=cu:0");
+        assert_eq!(find(&args, "-vf"), "hwupload_cuda");
+        // default pipe path stays free of device init
+        let pipe = build("mid", "h264_nvenc");
+        assert!(!pipe.contains(&"-init_hw_device".to_string()));
+        assert!(!pipe.contains(&"-vf".to_string()));
     }
 }

@@ -37,14 +37,31 @@ impl HwBackend {
 
 /// Optional `-vf hwupload*` chain for pipe transports.
 ///
-/// Returns `None` for both pipe transports: `PipeBgra` uses CPU swscale,
-/// `PipeNv12` is already GPU-friendly system memory that NVENC/QSV/VAAPI/AMF
-/// accept without an explicit upload filter (implicit upload). `HwDirect`
-/// reserves the upload filter for the future direct-capture path; it also
-/// returns `None` until `-init_hw_device` wiring lands, so no broken argv is
-/// emitted by default.
-pub fn hw_upload_filter(_encoder: &str, _transport: &Transport) -> Option<String> {
-    None
+/// - `PipeBgra` → `None` (CPU swscale).
+/// - `PipeNv12` → `None` (NV12 system memory; encoders upload implicitly).
+/// - `HwDirect` → explicit upload filter (C10 Windows / C11 Linux stepping
+///   stone: pipe stays, but frames are uploaded to GPU before encode so the
+///   scaler/encoder run on hardware). Requires the matching
+///   `-init_hw_device` prefix emitted by `build_ffmpeg_args_with_transport`.
+pub fn hw_upload_filter(encoder: &str, transport: &Transport) -> Option<String> {
+    if *transport != Transport::HwDirect {
+        return None;
+    }
+    hw_upload_chain(&HwBackend::for_encoder(encoder))
+}
+
+/// Explicit upload chain per backend. Frames are already profile-sized
+/// (FramePacer), so no GPU scaling — upload only.
+pub fn hw_upload_chain(backend: &HwBackend) -> Option<String> {
+    match backend {
+        HwBackend::None => None,
+        HwBackend::Cuda => Some("hwupload_cuda".into()),
+        HwBackend::D3d11va | HwBackend::D3d12va => Some("hwupload".into()),
+        HwBackend::Vaapi => Some("format=nv12,hwupload".into()),
+        HwBackend::Vulkan => Some("hwupload".into()),
+        HwBackend::Qsv => Some("hwupload=extra_hw_frames=64".into()),
+        HwBackend::Amf => Some("hwupload".into()),
+    }
 }
 
 /// `-init_hw_device` argv prefix for the direct-capture path.
@@ -71,6 +88,38 @@ pub fn direct_capture_supported() -> bool {
     cfg!(target_os = "windows") || cfg!(target_os = "linux")
 }
 
+/// Experimental direct-capture input argv (C10/C11 future, NOT wired into
+/// `StartPlan` yet). Kept here so the ffmpeg9 device syntax is reviewed in
+/// one place and unit-tested without touching the live pipe path.
+///
+/// - Windows: `ddagrab` (fullscreen) is the stable choice today; `gfxcapture`
+///   (WGC-based, ffmpeg 8.1+) is the window-aware successor. Both deliver
+///   D3D11 frames that `hwupload`/`scale_d3d11` can keep on-GPU.
+/// - Linux: PipeWire DMA-BUF import is compositor-dependent; the stable
+///   stepping stone is NV12 pipe + `format=nv12,hwupload` (vaapi) above.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectSource {
+    DdagrabFullscreen,
+    GfxCaptureWindow,
+}
+
+pub fn direct_capture_input_args(source: &DirectSource, fps: u32) -> Vec<String> {
+    match source {
+        DirectSource::DdagrabFullscreen => vec![
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("ddagrab=framerate={fps}"),
+        ],
+        DirectSource::GfxCaptureWindow => vec![
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("gfxcapture=framerate={fps}"),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +137,22 @@ mod tests {
     }
 
     #[test]
+    fn hwdirect_emits_upload_chain() {
+        assert_eq!(
+            hw_upload_filter("h264_nvenc", &Transport::HwDirect),
+            Some("hwupload_cuda".into())
+        );
+        assert_eq!(
+            hw_upload_filter("h264_qsv", &Transport::HwDirect),
+            Some("hwupload=extra_hw_frames=64".into())
+        );
+        assert_eq!(
+            hw_upload_filter("libx264", &Transport::HwDirect),
+            None
+        );
+    }
+
+    #[test]
     fn backend_mapping() {
         assert_eq!(HwBackend::for_encoder("h264_nvenc"), HwBackend::Cuda);
         assert_eq!(HwBackend::for_encoder("h264_qsv"), HwBackend::Qsv);
@@ -98,5 +163,14 @@ mod tests {
     fn no_device_init_by_default() {
         assert!(init_hw_device_args(&HwBackend::None).is_empty());
         assert!(!init_hw_device_args(&HwBackend::Cuda).is_empty());
+    }
+
+    #[test]
+    fn direct_capture_inputs_shape() {
+        let dda = direct_capture_input_args(&DirectSource::DdagrabFullscreen, 60);
+        assert_eq!(dda[0], "-f");
+        assert!(dda.join(" ").contains("ddagrab"));
+        let gfx = direct_capture_input_args(&DirectSource::GfxCaptureWindow, 30);
+        assert!(gfx.join(" ").contains("gfxcapture"));
     }
 }

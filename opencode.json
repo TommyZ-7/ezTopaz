@@ -13,6 +13,11 @@
     },
     {
       "action": "shell",
+      "resource": "git checkout main",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
       "resource": "git checkout -- *",
       "effect": "allow"
     },
@@ -24,6 +29,11 @@
     {
       "action": "shell",
       "resource": "git switch main *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git switch main",
       "effect": "allow"
     },
     {

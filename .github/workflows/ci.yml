@@ -2,6 +2,11 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - 'src-tauri/resources/ffmpeg/README.txt'
   push:
     branches: [main]
     paths-ignore:

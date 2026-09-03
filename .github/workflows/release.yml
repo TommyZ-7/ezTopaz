@@ -12,6 +12,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'packaging/**'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -23,10 +24,11 @@ concurrency:
 jobs:
   # Release bundles with the pinned FFmpeg bundled in (design §13.2, §4.4).
   # The BtbN build is GPL (libx264) — GPL notice must ship with artifacts (§11).
-  # NOTE: Linux bundles deb only for now — AppImage's linuxdeploy fails with
-  # "Failed to set rpath" when patchelf touches the bundled ffmpeg binary
-  # (diagnosed 2026-09-02 with tauri build -v). Revisit with a linuxdeploy
-  # wrapper (--exclude-files) or an upstream fix if AppImage is needed.
+  # Linux bundles deb + AppImage. AppImage's linuxdeploy runs its bundled
+  # patchelf over every ELF in the AppDir, which fails on the BtbN ffmpeg
+  # ("Failed to set rpath", diagnosed 2026-09-02). Workaround: build the
+  # AppImage WITHOUT ffmpeg, then inject it post-bundle via extract +
+  # appimagetool repack (packaging/appimage/inject-ffmpeg.sh).
   build:
     strategy:
       fail-fast: false
@@ -56,7 +58,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libpipewire-0.3-dev pkg-config
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libpipewire-0.3-dev pkg-config librsvg2-dev
       - name: Download pinned FFmpeg (BtbN GPL build)
         shell: bash
         env:
@@ -90,6 +92,24 @@ jobs:
           EOF
       - name: Build bundles
         run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
+      - name: Download appimagetool (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL -o /tmp/appimagetool.AppImage \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x /tmp/appimagetool.AppImage
+      - name: Build AppImage with bundled FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          FFMPEG_BIN=src-tauri/resources/ffmpeg/ffmpeg
+          mv "$FFMPEG_BIN" /tmp/ffmpeg-bundled
+          trap 'mv /tmp/ffmpeg-bundled "$FFMPEG_BIN"' EXIT
+          pnpm tauri build --features ${{ matrix.features }} --bundles appimage
+          trap - EXIT
+          mv /tmp/ffmpeg-bundled "$FFMPEG_BIN"
+          APPIMAGE=(target/release/bundle/appimage/*.AppImage)
+          bash packaging/appimage/inject-ffmpeg.sh "$APPIMAGE" "$FFMPEG_BIN" /tmp/appimagetool.AppImage
       - name: Publish release (tags only)
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -131,13 +151,13 @@ jobs:
           ---
           $COMPARE
 
-          MVP preview build. FFmpeg (BtbN GPL build) is bundled — the GPL notice must ship with the artifacts (design §11). Windows: NSIS installer. Linux: deb (AppImage is planned for a later release).
+          MVP preview build. FFmpeg (BtbN GPL build) is bundled — the GPL notice must ship with the artifacts (design §11). Windows: NSIS installer. Linux: deb + AppImage (AppImage has ffmpeg injected post-bundle; needs FUSE/libfuse2 at runtime and glibc 2.39+).
           EOF
           # matrix の2ジョブが同じ Release へ追記するため冪等に
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "ezTopaz $TAG" --notes-file /tmp/release-notes.md
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            $(find target/release/bundle -type f \( -name '*.deb' -o -name '*.exe' \))
+            $(find target/release/bundle -type f \( -name '*.deb' -o -name '*.exe' -o -name '*.AppImage' \))
       - uses: actions/upload-artifact@v4
         with:
           name: eztopaz-${{ matrix.os }}

@@ -2,13 +2,23 @@
 
 Arch系 (Arch / CachyOS / EndeavourOS / Manjaro) 向けの手順。Wayland + PipeWire が必須 (X11非対応、要件 §6)。
 
-## インストール (AUR)
+## インストール (AppImage)
+
+GitHub Release の `.AppImage` をダウンロードして実行権限を付与:
 
 ```bash
-yay -S eztopaz-bin
+chmod +x ezTopaz_*_amd64.AppImage
+./ezTopaz_*_amd64.AppImage
 ```
 
-公開前の場合は `packaging/aur/` の正本から手動ビルド:
+- 実行には FUSE が必要 (`sudo pacman -S fuse2`)。FUSE が使えない環境では
+  `./ezTopaz_*_amd64.AppImage --appimage-extract` で展開して `squashfs-root/usr/bin/eztopaz` を直接実行
+- AppImage は ubuntu-24.04 でビルドしているため glibc 2.39+ が必要 (Arch系rollingでは問題なし)
+- FFmpeg (BtbN GPLビルド) 同梱済み。linuxdeployの制約でビルド後に注入している (詳細は `packaging/appimage/inject-ffmpeg.sh`)
+
+## インストール (AUR、任意)
+
+`yay -S eztopaz-bin` (AURへの公開は手動。`packaging/aur/` の正本から手動ビルドも可):
 
 ```bash
 cp -r packaging/aur /tmp/eztopaz-bin && cd /tmp/eztopaz-bin
@@ -16,7 +26,7 @@ makepkg -si
 ```
 
 `eztopaz-bin` は GitHub Release の deb をリパックする。リリース毎の版数・ハッシュ更新は
-`packaging/aur/PKGBUILD` 冒頭のコメントに従う (AURへの公開は手動)。
+`packaging/aur/PKGBUILD` 冒頭のコメントに従う。
 
 ## ソースビルド
 

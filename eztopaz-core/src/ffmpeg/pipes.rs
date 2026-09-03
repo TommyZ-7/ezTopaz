@@ -7,6 +7,7 @@
 use crate::error::{Error, Result};
 #[cfg(unix)]
 use std::path::Path;
+use std::time::Duration;
 
 pub fn video_pipe_path() -> String {
     if cfg!(windows) {
@@ -55,6 +56,10 @@ pub fn create(path: &str) -> Result<()> {
 /// Open a writer to the pipe. On unix this blocks until the reader (FFmpeg) opens
 /// the FIFO, so call it from a dedicated thread after FFmpeg spawn; on Windows it
 /// blocks in `ConnectNamedPipe` until FFmpeg connects. Same contract, both sides.
+///
+/// Prefer [`open_writers_concurrently`] / [`open_writer_timeout`]: ffmpeg opens
+/// the video input before the audio input, so a sequential audio-first open
+/// deadlocks (each side waits for the other) and freezes the caller.
 pub fn open_writer(path: &str) -> Result<std::fs::File> {
     #[cfg(unix)]
     {
@@ -62,6 +67,73 @@ pub fn open_writer(path: &str) -> Result<std::fs::File> {
     }
     #[cfg(windows)]
     server::open_writer(path)
+}
+
+/// How long a pipe-writer connect waits for ffmpeg before giving up (covers
+/// ffmpeg spawn/init, normally 1-2s). Bounds `start_stream` instead of hanging
+/// the main thread forever when ffmpeg never opens its read end.
+pub const PIPE_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Open one pipe writer on a helper thread; `Err` on timeout. The helper
+/// thread stays blocked (detached) on timeout, so treat timeouts as fatal
+/// for the pipeline (kill ffmpeg) rather than retrying the same pipes.
+pub fn open_writer_timeout(path: &str, timeout: Duration) -> Result<std::fs::File> {
+    let owned = path.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name(format!("pipe-open-{owned}"))
+        .spawn(move || {
+            let _ = tx.send(open_writer(&owned));
+        })
+        .map_err(|e| Error::Ffmpeg(format!("pipe open thread failed: {e}")))?;
+    rx.recv_timeout(timeout)
+        .map_err(|_| {
+            Error::Ffmpeg(format!("timed out waiting for ffmpeg to open pipe {path}"))
+        })?
+}
+
+/// Open both pipe writers concurrently; returns `(video, audio)`.
+///
+/// ffmpeg opens the video input before the audio input, so opening the
+/// writers sequentially audio-first deadlocks against it (Rust waits for an
+/// audio reader that never comes, ffmpeg waits for a video writer that never
+/// comes). Concurrent opens remove the ordering dependency; the timeout
+/// turns a missing ffmpeg reader into a clear error instead of a hang.
+/// Total wait is bounded by `timeout` across both pipes.
+pub fn open_writers_concurrently(
+    video: &str,
+    audio: &str,
+    timeout: Duration,
+) -> Result<(std::fs::File, std::fs::File)> {
+    let deadline = std::time::Instant::now() + timeout;
+    let (vtx, vrx) = std::sync::mpsc::channel();
+    let (atx, arx) = std::sync::mpsc::channel();
+    let (vpath, apath) = (video.to_string(), audio.to_string());
+    std::thread::Builder::new()
+        .name(format!("pipe-open-{vpath}"))
+        .spawn(move || {
+            let _ = vtx.send(open_writer(&vpath));
+        })
+        .map_err(|e| Error::Ffmpeg(format!("pipe open thread failed: {e}")))?;
+    std::thread::Builder::new()
+        .name(format!("pipe-open-{apath}"))
+        .spawn(move || {
+            let _ = atx.send(open_writer(&apath));
+        })
+        .map_err(|e| Error::Ffmpeg(format!("pipe open thread failed: {e}")))?;
+    // Fast-fail a broken pipe without waiting out the deadline for the other.
+    let video_writer = vrx
+        .recv_timeout(timeout)
+        .map_err(|_| {
+            Error::Ffmpeg(format!("timed out waiting for ffmpeg to open video pipe {video}"))
+        })??;
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let audio_writer = arx
+        .recv_timeout(remaining)
+        .map_err(|_| {
+            Error::Ffmpeg(format!("timed out waiting for ffmpeg to open audio pipe {audio}"))
+        })??;
+    Ok((video_writer, audio_writer))
 }
 
 #[cfg(windows)]
@@ -146,6 +218,63 @@ mod tests {
         let meta = std::fs::metadata(&path).unwrap();
         use std::os::unix::fs::FileTypeExt;
         assert!(meta.file_type().is_fifo(), "created file is a FIFO");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_writers_connect_video_first_without_deadlock() {
+        // Regression test for the start_stream freeze: ffmpeg opens the video
+        // input before the audio input, so an audio-first sequential open
+        // deadlocks (each side waits for the other). Concurrent opens must
+        // connect against a video-first reader.
+        let dir = std::env::temp_dir().join(format!("eztopaz-pipe-conc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("video.pipe");
+        let audio = dir.join("audio.pipe");
+        create(video.to_str().unwrap()).unwrap();
+        create(audio.to_str().unwrap()).unwrap();
+        // Fake ffmpeg: readers opened video-first, like the ffmpeg argv order.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (v, a) = (video.clone(), audio.clone());
+        std::thread::spawn(move || {
+            let vr = std::fs::OpenOptions::new().read(true).open(&v).unwrap();
+            let ar = std::fs::OpenOptions::new().read(true).open(&a).unwrap();
+            tx.send(()).unwrap();
+            drop((vr, ar));
+        });
+        let (vw, aw) = open_writers_concurrently(
+            video.to_str().unwrap(),
+            audio.to_str().unwrap(),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        drop((vw, aw));
+        rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_open_times_out_without_readers() {
+        // No ffmpeg reader: must error, not block forever. (The helper
+        // threads stay blocked on the FIFO opens until process exit; the
+        // caller must treat this as fatal and kill ffmpeg.)
+        let dir = std::env::temp_dir()
+            .join(format!("eztopaz-pipe-timeout-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("video.pipe");
+        let audio = dir.join("audio.pipe");
+        create(video.to_str().unwrap()).unwrap();
+        create(audio.to_str().unwrap()).unwrap();
+        let err = open_writers_concurrently(
+            video.to_str().unwrap(),
+            audio.to_str().unwrap(),
+            Duration::from_millis(500),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Ffmpeg(_)), "unexpected error: {err}");
+        assert!(open_writer_timeout(video.to_str().unwrap(), Duration::from_millis(200)).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 

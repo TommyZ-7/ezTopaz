@@ -179,8 +179,12 @@ unsafe fn wasapi_polling(
                         std::slice::from_raw_parts(ptr as *const f32, frames as usize * channels);
                     let mut stereo = Vec::with_capacity(frames as usize * 2);
                     for i in 0..frames as usize {
-                        stereo.push(raw[i * channels]);
-                        stereo.push(raw[i * channels + 1]);
+                        // Mono mics (channels == 1) duplicate the channel;
+                        // >2 channels fold down to the first two.
+                        let l = raw[i * channels];
+                        let r = if channels >= 2 { raw[i * channels + 1] } else { l };
+                        stereo.push(l);
+                        stereo.push(r);
                     }
                     let block = resample_stereo(&stereo, rate, TARGET_RATE);
                     if !sink.push(&id, block) {

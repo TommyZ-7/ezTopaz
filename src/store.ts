@@ -72,6 +72,22 @@ const emptyStatus: StreamStatus = {
   retrying: null,
 };
 
+// Preview screen-switch restart (fixes "stuck on previous screen").
+// setScreen() clears the stale frame immediately and re-issues start_preview
+// with the new target. Rapid switches are debounced so only the last
+// selection hits the backend; the generation counter drops stale callbacks
+// (e.g. user pressed stop while a restart was in flight).
+let previewRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let previewRestartGen = 0;
+
+function cancelPendingPreviewRestart() {
+  previewRestartGen += 1;
+  if (previewRestartTimer !== null) {
+    clearTimeout(previewRestartTimer);
+    previewRestartTimer = null;
+  }
+}
+
 export const useStore = create<AppState>((set, get) => ({
   tab: "screen",
   setTab: (t) => set({ tab: t }),
@@ -132,7 +148,48 @@ export const useStore = create<AppState>((set, get) => ({
     });
   },
 
-  setScreen: (screen) => set({ screen }),
+  setScreen: (screen) => {
+    const prev = get().screen;
+    if (prev.type === screen.type && prev.id === screen.id) return;
+    const wasPreviewing = get().previewing && !get().isLive;
+    // Drop the stale frame at once; otherwise the UI keeps showing the
+    // previous screen until (or unless) a new frame arrives.
+    set(wasPreviewing ? { screen, preview: null } : { screen });
+    if (!wasPreviewing) return;
+    const gen = ++previewRestartGen;
+    if (previewRestartTimer !== null) {
+      clearTimeout(previewRestartTimer);
+    }
+    previewRestartTimer = setTimeout(() => {
+      previewRestartTimer = null;
+      // A newer switch / stop supersedes this one.
+      if (gen !== previewRestartGen) return;
+      if (!get().previewing || get().isLive) return;
+      const s = get();
+      void api
+        .startPreview({
+          ingestUrl: s.ingestUrl,
+          streamKey: s.streamKey,
+          screen: s.screen,
+          audio: { mode: s.audioMode, apps: s.selectedApps, mic: s.mic },
+          profileId: s.profileId,
+          encoderOverride: s.encoderOverride,
+        })
+        .then(() => {
+          if (gen === previewRestartGen) {
+            set({ previewing: true });
+          } else if (!get().previewing) {
+            // Stopped while the restart was in flight: don't leave it running.
+            api.stopPreview().catch(() => undefined);
+          }
+        })
+        .catch((e) => {
+          if (gen !== previewRestartGen) return;
+          set({ previewing: false, backendError: String(e) });
+          get().showToast(String(e));
+        });
+    }, 250);
+  },
   setAudioMode: (audioMode) => set({ audioMode }),
   toggleApp: (id) =>
     set((s) => ({
@@ -177,6 +234,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   async startStream() {
+    cancelPendingPreviewRestart();
     const s = get();
     try {
       const status = await api.startStream({
@@ -194,6 +252,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   async stopStream() {
+    cancelPendingPreviewRestart();
     try {
       await api.stopStream();
     } finally {
@@ -219,6 +278,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   async stopPreview() {
+    cancelPendingPreviewRestart();
     try {
       await api.stopPreview();
     } finally {

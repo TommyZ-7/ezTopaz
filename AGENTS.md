@@ -14,7 +14,7 @@
 ## 2. CI 発火条件 (Actions 消費抑制のため分割)
 - `.github/workflows/ci.yml` (軽量: linux test + windows check + frontend)
   - `pull_request`, `push: branches: [main]`, `workflow_dispatch`
-  - `push` は docs 系を除外 (`docs/**`, `**.md`, `LICENSE`, `resources/ffmpeg/README.txt`)
+  - `pull_request`・`push` とも docs 系を除外 (`docs/**`, `**.md`, `LICENSE`, `resources/ffmpeg/README.txt`)
   - 同一 ref の旧実行は自動キャンセル (`cancel-in-progress: true`)
 - `.github/workflows/release.yml` (重量: ffmpeg同梱 deb/nsis + Release公開)
   - `push: tags: ['preview.*']`, `pull_request` (paths限定), `workflow_dispatch`
@@ -30,6 +30,9 @@ cargo check -p eztopaz --features capture-linux
 pnpm build && pnpm test
 ```
 - Windows backend は必要時のみ: `cargo check -p eztopaz --features capture-windows`
+- capture-linux をローカルで: システム PipeWire が新しすぎると libspa 0.8 が壊れるため、Ubuntu noble の `libpipewire-0.3-dev`/`libspa-0.2-dev` を展開し `PKG_CONFIG_PATH` で指す。bindgen + 新 libclang の opaque 問題が出たら CI 結果を正とする
+- capture-windows をローカルで: 上記 check に `--tests` を付けると Windows 用テストコードも検査できる
+- pnpm 未導入環境: `curl -fsSL https://get.pnpm.io/install.sh | sh -` (ユーザ空間に導入)
 - フルバンドル確認は CI `Release` 手動実行で代替し、ローカル `tauri build` は最終確認時のみ。
 
 ## 4. コミット規約
@@ -61,4 +64,5 @@ git tag preview.04 && git push origin preview.04
 ```
 4. タグ発火の `Release` workflow が deb/NSIS を再ビルドして GitHub Release 公開 (§6方式で完了まで監視)
 - PR時とタグ時の二重ビルドは意図的 (公開物がタグcommit由来である保証のため。簡略化しない方針)
+- 公開物には `resources/licenses/` (GPL-2.0条文+注意文+CI生成BUILD.txt) の同梱必須 (`tauri.conf.json` resources と CI 生成を確認)
 - 公開確認: `gh release view preview.04 --json assets --jq '.assets[].name'`

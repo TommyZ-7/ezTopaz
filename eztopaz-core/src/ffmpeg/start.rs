@@ -3,7 +3,7 @@
 
 use crate::config::{validate_stream_key, ProfilesConfig};
 use crate::error::{Error, Result};
-use crate::ffmpeg::args::build_ffmpeg_args;
+use crate::ffmpeg::args::{build_ffmpeg_args_with_transport, transport_for_encoder, Transport};
 use crate::ffmpeg::pipes;
 use crate::ipc_types::StreamConfig;
 
@@ -13,6 +13,7 @@ pub struct StartPlan {
     pub video_pipe: String,
     pub audio_pipe: String,
     pub encoder: String,
+    pub transport: Transport,
 }
 
 /// Validate, build the plan, and create the named pipes FFmpeg reads from.
@@ -49,16 +50,18 @@ pub fn build_plan(cfg: &StreamConfig, profiles: &ProfilesConfig, usable_encoders
     let video_pipe = pipes::video_pipe_path();
     let audio_pipe = pipes::audio_pipe_path();
 
-    let ffmpeg_args = build_ffmpeg_args(
+    let transport = transport_for_encoder(&encoder);
+    let ffmpeg_args = build_ffmpeg_args_with_transport(
         profile,
         &encoder,
         &cfg.ingest_url,
         &cfg.stream_key,
         &video_pipe,
         &audio_pipe,
+        &transport,
     )?;
 
-    Ok(StartPlan { ffmpeg_args, video_pipe, audio_pipe, encoder })
+    Ok(StartPlan { ffmpeg_args, video_pipe, audio_pipe, encoder, transport })
 }
 
 #[cfg(test)]

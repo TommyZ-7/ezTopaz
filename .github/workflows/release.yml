@@ -72,6 +72,18 @@ jobs:
             powershell -Command "Expand-Archive -Force ffmpeg.zip C:/tmp-ffmpeg"
             cp "/c/tmp-ffmpeg/${FFMPEG_DIR}-win64-gpl-8.1/bin/ffmpeg.exe" src-tauri/resources/ffmpeg/
           fi
+          # GPL provenance: record the exact build inside the bundle (design §11)
+          mkdir -p src-tauri/resources/licenses
+          cat > src-tauri/resources/licenses/FFMPEG-BUILD.txt <<EOF
+          Bundled FFmpeg build provenance (generated at bundle time)
+          FFMPEG_TAG=${FFMPEG_TAG}
+          FFMPEG_DIR=${FFMPEG_DIR}
+          Linux: https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-linux64-gpl-8.1.tar.xz
+          Windows: https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/${FFMPEG_DIR}-win64-gpl-8.1.zip
+          Build scripts and sources: https://github.com/BtbN/FFmpeg-Builds
+          Upstream FFmpeg: https://github.com/FFmpeg/FFmpeg / https://ffmpeg.org/download.html
+          License: GPL-2.0 (see GPL-2.0.txt in this directory)
+          EOF
       - name: Build bundles
         run: pnpm i && pnpm tauri build --features ${{ matrix.features }} --bundles ${{ matrix.bundles }}
       - name: Publish release (tags only)

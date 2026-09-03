@@ -4,7 +4,8 @@
 - `main` 直push禁止。作業は `feat/*`, `fix/*`, `docs/*` 等の feature ブランチで行う。
 - PR → `CI` 緑 → `main` マージを基本フローとする。
 - `main` は常時リリース可能に保つ。壊れた状態でマージしない。
-- リリースは `preview.*` タグ push のみ。例: `git tag preview.02 && git push origin preview.02`
+- リリースは `preview.*` タグ push のみ。例: `git tag preview.04 && git push origin preview.04`
+- AI はユーザーの明示的な指示なしにリリース関連操作 (タグ作成/push、Release 手動実行、`gh release` 公開) を行わない
 
 ## 2. CI 発火条件 (Actions 消費抑制のため分割)
 - `.github/workflows/ci.yml` (軽量: linux test + windows check + frontend)
@@ -16,7 +17,7 @@
   - PRでは `src-tauri/**`, `eztopaz-core/**`, `Cargo.*`, `package.json`, `pnpm-*`, `release.yml` 変更時のみbundle実行 (mainのリリース可能性担保)
   - docsのみ・UIのみのPRでは走らない。確認したい時のみ手動実行:
     - `gh workflow run Release --ref <branch>`
-  - Release公開 (`gh release create/upload`) はタグ時のみ実行
+  - Release公開 (`gh release create/upload`) はタグ時のみ実行。AI の独断公開禁止 (§1)
 
 ## 3. push 前ローカル検証 (CI 往復を減らす)
 ```bash
@@ -66,11 +67,11 @@ gh run view "$TRACK" --json status,conclusion,jobs --jq '{status, conclusion, jo
    - `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `eztopaz-core/Cargo.toml`, `Cargo.lock`
    - `package.json` は `0.1.0` のまま変えない
 2. branch → PR → CI + Release(bundle) 緑 → `main` マージ (§1, §5準拠)
-3. 更新済み `main` にタグ付けして push:
+3. 更新済み `main` にタグ付けして push (ユーザーの指示がある時のみ。AI の独断禁止):
 ```bash
 git checkout main && git pull
-git tag preview.02 && git push origin preview.02
+git tag preview.04 && git push origin preview.04
 ```
 4. タグ発火の `Release` workflow が deb/NSIS を再ビルドして GitHub Release 公開 (§6方式で完了まで監視)
 - PR時とタグ時の二重ビルドは意図的 (公開物がタグcommit由来である保証のため。簡略化しない方針)
-- 公開確認: `gh release view preview.02 --json assets --jq '.assets[].name'`
+- 公開確認: `gh release view preview.04 --json assets --jq '.assets[].name'`

@@ -26,6 +26,6 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png"],
-    "resources": ["resources/ffmpeg/*"]
+    "resources": ["resources/ffmpeg/*", "resources/licenses/*"]
   }
 }

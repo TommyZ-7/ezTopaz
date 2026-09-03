@@ -57,9 +57,11 @@ pub fn create(path: &str) -> Result<()> {
 /// the FIFO, so call it from a dedicated thread after FFmpeg spawn; on Windows it
 /// blocks in `ConnectNamedPipe` until FFmpeg connects. Same contract, both sides.
 ///
-/// Prefer [`open_writers_concurrently`] / [`open_writer_timeout`]: ffmpeg opens
-/// the video input before the audio input, so a sequential audio-first open
-/// deadlocks (each side waits for the other) and freezes the caller.
+/// Callers must open video-first and have the video sink feeding before
+/// waiting on the audio writer: ffmpeg opens the video input first and reads
+/// probe data before it opens the audio input, so an audio wait with no
+/// video data flowing never resolves. Prefer [`open_writer_timeout`] per
+/// pipe in that order over [`open_writers_concurrently`].
 pub fn open_writer(path: &str) -> Result<std::fs::File> {
     #[cfg(unix)]
     {
@@ -94,12 +96,12 @@ pub fn open_writer_timeout(path: &str, timeout: Duration) -> Result<std::fs::Fil
 
 /// Open both pipe writers concurrently; returns `(video, audio)`.
 ///
-/// ffmpeg opens the video input before the audio input, so opening the
-/// writers sequentially audio-first deadlocks against it (Rust waits for an
-/// audio reader that never comes, ffmpeg waits for a video writer that never
-/// comes). Concurrent opens remove the ordering dependency; the timeout
-/// turns a missing ffmpeg reader into a clear error instead of a hang.
-/// Total wait is bounded by `timeout` across both pipes.
+/// Only fits readers that open both inputs without reading first (like the
+/// test fake below). Real ffmpeg reads video probe data before opening the
+/// audio input, so concurrent opens stall when nothing feeds video yet —
+/// open video-first with [`open_writer_timeout`], start the video sink, then
+/// open audio. The timeout turns a missing ffmpeg reader into a clear error
+/// instead of a hang. Total wait is bounded by `timeout` across both pipes.
 pub fn open_writers_concurrently(
     video: &str,
     audio: &str,
@@ -275,6 +277,75 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, Error::Ffmpeg(_)), "unexpected error: {err}");
         assert!(open_writer_timeout(video.to_str().unwrap(), Duration::from_millis(200)).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_open_stalls_without_video_data() {
+        // Faithful ffmpeg contract: the reader opens video, reads probe
+        // bytes, and only then opens audio. Concurrent opens stall here
+        // because no sink exists yet to feed video — this was the
+        // start_stream deadlock (PIPE_OPEN_TIMEOUT + kill). Deterministic:
+        // audio can never connect, so a short timeout must fail.
+        let dir = std::env::temp_dir()
+            .join(format!("eztopaz-pipe-ffmpeg-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("video.pipe");
+        let audio = dir.join("audio.pipe");
+        create(video.to_str().unwrap()).unwrap();
+        create(audio.to_str().unwrap()).unwrap();
+        let (v, a) = (video.clone(), audio.clone());
+        std::thread::spawn(move || {
+            let mut vr = std::fs::OpenOptions::new().read(true).open(&v).unwrap();
+            let mut probe = [0u8; 64];
+            use std::io::Read;
+            let _ = vr.read_exact(&mut probe); // blocks: nobody feeds video yet
+            let ar = std::fs::OpenOptions::new().read(true).open(&a).unwrap();
+            drop((vr, ar));
+        });
+        let err = open_writers_concurrently(
+            video.to_str().unwrap(),
+            audio.to_str().unwrap(),
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Ffmpeg(_)), "unexpected error: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn video_first_with_feed_connects_both() {
+        // The launch_pipeline order: open video, feed it (video sink), then
+        // open audio. Against the same probe-reading fake ffmpeg this must
+        // connect both writers promptly.
+        let dir = std::env::temp_dir()
+            .join(format!("eztopaz-pipe-video-first-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("video.pipe");
+        let audio = dir.join("audio.pipe");
+        create(video.to_str().unwrap()).unwrap();
+        create(audio.to_str().unwrap()).unwrap();
+        let (v, a) = (video.clone(), audio.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut vr = std::fs::OpenOptions::new().read(true).open(&v).unwrap();
+            let mut probe = [0u8; 64];
+            use std::io::Read;
+            vr.read_exact(&mut probe).unwrap();
+            let ar = std::fs::OpenOptions::new().read(true).open(&a).unwrap();
+            tx.send(()).unwrap();
+            drop((vr, ar));
+        });
+        let mut vw = open_writer_timeout(video.to_str().unwrap(), Duration::from_secs(10)).unwrap();
+        // video sink starts feeding right after the video connect
+        use std::io::Write;
+        vw.write_all(&[0u8; 4096]).unwrap();
+        vw.flush().unwrap();
+        let aw = open_writer_timeout(audio.to_str().unwrap(), Duration::from_secs(10)).unwrap();
+        drop((vw, aw));
+        rx.recv_timeout(Duration::from_secs(10)).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }
 

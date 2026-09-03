@@ -101,5 +101,10 @@ export interface PreviewFrame {
   h: number;
 }
 
+export interface StreamError {
+  code: string;
+  msg: string;
+}
+
 export const MAX_VIDEO_KBPS = 2000;
 export const MAX_AUDIO_KBPS = 320;

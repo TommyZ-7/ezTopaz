@@ -36,31 +36,14 @@ pnpm build && pnpm test
 ## 5. CI結果確認義務
 - 各 `push` 後にCI結果を必ず確認する。赤のまま放置・次作業着手禁止。
 - PR作成時・マージ前にも全check緑を必ず確認する。緑以外でマージ禁止。
-```bash
-gh run list --branch <branch> --limit 5
-gh run watch <run-id> --exit-status
-gh pr checks <pr-number>
-```
+- 確認手順は `ci-watch` skill に従う。
 
 ## 6. CI監視の自動化
 - `gh run watch` は annotation 取得で 403 になる環境があるため、原則ポーリング方式を使う。
 - フォアグラウンド shell は 120 秒で切れるため、監視は必ずバックグラウンド実行する。
 - run ID を起動時に固定しない。new push で run が再生成されると旧 run (cancelled) を見て誤終了するため、毎回最新 run を再解決する。
-```bash
-# BRANCH / WF (CI or Release) を指定。最新runを動的追跡し完了まで監視
-BRANCH="<branch>"; WF=CI; TRACK=""
-resolve() { gh run list --branch "$BRANCH" --workflow "$WF" --limit 5 --json databaseId,status,conclusion --jq '[.[] | select(.conclusion != "cancelled")] | ((map(select(.status=="in_progress" or .status=="queued" or .status=="waiting" or .status=="requested")) | sort_by(.databaseId) | last) // (sort_by(.databaseId) | last)) | .databaseId // empty'; }
-for i in $(seq 1 90); do
-  id=$(resolve)
-  if [ -z "$id" ]; then echo "$(date -u +%H:%M:%S) waiting for run..."; sleep 30; continue; fi
-  [ "$id" != "$TRACK" ] && { [ -n "$TRACK" ] && echo "switch $TRACK -> $id"; TRACK="$id"; }
-  s=$(gh run view "$TRACK" --json status,conclusion --jq '.status + "/" + .conclusion')
-  echo "$(date -u +%H:%M:%S) $TRACK $s"
-  case "$s" in */cancelled) TRACK="";; completed/*) break;; *) sleep 60;; esac
-done
-gh run view "$TRACK" --json status,conclusion,jobs --jq '{status, conclusion, jobs: [.jobs[] | {name, conclusion}]}'
-```
-- 再開方法: 上記を `BRANCH`/`WF` 指定でバックグラウンド再実行。実行中モニターの停止は不可のため、重複起動してもよい (監視は読み取り専用。完了後の merge/fix 判断は通知を受けて一元化する)。
+- 実装は `.opencode/skills/ci-watch/scripts/ci-watch.sh` が正本 (AGENTS.mdに貼らず参照すること)。
+- 再開方法: 上記スクリプトを `BRANCH`/`WF` 指定でバックグラウンド再実行。実行中モニターの停止は不可のため、重複起動してもよい (監視は読み取り専用。完了後の merge/fix 判断は通知を受けて一元化する)。
 - 完了後の既定動作: 成功→自動マージ (`gh pr merge <n> --merge` 後 `main` へ切替・pull)、失敗→ログ解析して修正を試み branch 更新。
 
 ## 7. リリース手順 (preview.*)

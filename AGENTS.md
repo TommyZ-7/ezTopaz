@@ -32,7 +32,8 @@ cargo check -p eztopaz --features capture-linux
 pnpm build && pnpm test
 ```
 - Windows backend は必要時のみ: `cargo check -p eztopaz --features capture-windows`
-- capture-linux をローカルで: システム PipeWire が新しすぎると libspa 0.8 が壊れるため、Ubuntu noble の `libpipewire-0.3-dev`/`libspa-0.2-dev` を展開し `PKG_CONFIG_PATH` で指す。bindgen + 新 libclang の opaque 問題が出たら CI 結果を正とする
+- capture-linux をローカルで: pipewire-rs 0.10 のため Ubuntu 24.04 / Arch系ともにシステムの PipeWire のままビルド可 (旧 libspa 0.8 時代の noble ヘッダ展開・`PKG_CONFIG_PATH` 回避策は不要。Arch系の依存表は `docs/arch.md`)
+- pnpm 11系環境: `pnpm i/build/test` が approve-builds ゲートで止まる場合は `pnpm approve-builds` で許可するか、CI (pnpm 10) の結果を正とする
 - capture-windows をローカルで: 上記 check に `--tests` を付けると Windows 用テストコードも検査できる
 - pnpm 未導入環境: `curl -fsSL https://get.pnpm.io/install.sh | sh -` (ユーザ空間に導入)
 - フルバンドル確認は CI `Release` 手動実行で代替し、ローカル `tauri build` は最終確認時のみ。

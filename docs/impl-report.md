@@ -39,10 +39,9 @@
 
 ### ローカル検証 Tips
 
-- **capture-linux をローカルで**: システムの PipeWire が新しすぎると libspa 0.8 が壊れるため、
-  Ubuntu noble の `libpipewire-0.3-dev`/`libspa-0.2-dev` を展開し `PKG_CONFIG_PATH` で指す。
-  ただし bindgen 0.69 + 新しめの libclang (Arch の clang 22 等) では一部構造体が opaque 化する
-  環境問題があり、その場合は CI 結果を正とする。
+- **capture-linux をローカルで**: pipewire-rs 0.10 (#27〜) のため Ubuntu 24.04 / Arch系とも
+  システムの PipeWire のままビルド可。旧 libspa 0.8 時代の noble ヘッダ展開・`PKG_CONFIG_PATH`
+  回避策と bindgen opaque 問題は解消済み。Arch系の依存表は `docs/arch.md`。
 - **capture-windows をローカルで**: `rustup target add x86_64-pc-windows-msvc` →
   `cargo check --target x86_64-pc-windows-msvc --features capture-windows` (リンク不要なので check だけ可能)。
   `--tests` を付けると Windows 用テストコードも検査できる。
@@ -55,14 +54,14 @@
 - 同梱 ffmpeg: **pinned BtbN GPL ビルド** `autobuild-2026-09-02-13-13` (FFmpeg n8.1.2)
   - 更新手順: ci.yml の `FFMPEG_TAG`/`FFMPEG_DIR` を更新
   - **GPL (libx264) のため配布物に GPL 表記が必須** (設計 §11)
-- AppImage は未提供 (§2 の保留参照)。Arch 等への配布は AppImage 復活後 or AUR (手動) かソースビルド
+- AppImage は未提供 (§2 の保留参照)。Arch系への配布は `packaging/aur/` の `eztopaz-bin` (debリパック) + ソースビルド (手順は `docs/arch.md`)
 
 ## 5. 残タスク (優先順)
 
 1. **実機 E2E** (Wayland + PipeWire 実機, 要件 AC-04/05/06/08):
    起動 → Portalピッカー → 配信開始 → `ffprobe rtspt://topaz.chat/live/<key>` で確認。
    ffmpeg は BtbN ビルドを `EZTOPAZ_FFMPEG` 指定が最短。問題発生時は `logs/ezTopaz-*.log` を確認。
-2. AppImage 復活 (linuxdeploy ラッパー --exclude-files + librsvg2-dev) または AUR パッケージ
+2. ~~AppImage 復活 (linuxdeploy ラッパー --exclude-files + librsvg2-dev) または AUR パッケージ~~ → AUR は `packaging/aur/eztopaz-bin` で対応済み (#27)。AppImage 復活は任意
 3. F-AU-04: アプリ別ゲインUI (AudioSelector にスライダー/ミュート → `update_audio_mix`。バックエンドは実装済み)
 4. 小口: `probe_encoders()` 結果キャッシュ (start_stream が全候補OKと仮定している `ponytail:` 箇所) / ログローテート / F-CF-03 export/import
 

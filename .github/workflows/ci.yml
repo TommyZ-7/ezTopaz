@@ -1,12 +1,10 @@
 name: CI
 
 on:
+  # PRでは常時起動する。docsのみ変更の場合は changes ジョブが検出して
+  # linux/windows を高速パス (即green) にする。paths-ignore を付けると
+  # 必須チェックが "Expected" のまま詰まるため付けないこと。
   pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'LICENSE'
-      - 'src-tauri/resources/ffmpeg/README.txt'
   push:
     branches: [main]
     paths-ignore:
@@ -21,34 +19,80 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.check.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          FILES=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "Changed files:"
+          echo "$FILES"
+          if [ -z "$FILES" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if echo "$FILES" | grep -qvE '(^docs/|\.md$|(^|/)LICENSE$|^src-tauri/resources/ffmpeg/README\.txt$)'; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
   linux:
+    needs: changes
     # 24.04: libspa 0.8 (pipewire-rs) needs newer SPA headers than 22.04 ships
     # (PipeWire 1.x has spa_video_info_raw.flags / u64 modifier). See requirements.md §283.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Docs-only fast pass
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Docs-only change, skipping heavy checks."
       - uses: dtolnay/rust-toolchain@stable
+        if: needs.changes.outputs.docs_only != 'true'
       - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.docs_only != 'true'
         with: { version: 10 }
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.docs_only != 'true'
         with: { node-version: 22, cache: pnpm }
       - name: Install system deps (Tauri + PipeWire)
+        if: needs.changes.outputs.docs_only != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libpipewire-0.3-dev pkg-config
       - name: Core tests
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo test -p eztopaz-core
       - name: Check capture-linux backend
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo check -p eztopaz --features capture-linux
       - name: Frontend
+        if: needs.changes.outputs.docs_only != 'true'
         run: pnpm i && pnpm build && pnpm test
 
   windows:
+    needs: changes
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Docs-only fast pass
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Docs-only change, skipping heavy checks."
       - uses: dtolnay/rust-toolchain@stable
+        if: needs.changes.outputs.docs_only != 'true'
       - name: Core tests
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo test -p eztopaz-core
       - name: Check capture-windows backend
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo check -p eztopaz --features capture-windows

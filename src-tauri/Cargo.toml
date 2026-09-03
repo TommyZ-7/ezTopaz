@@ -41,10 +41,12 @@ windows = { version = "0.52", optional = true, features = [
   "Win32_UI_Shell_PropertiesSystem",
   "Win32_UI_WindowsAndMessaging",
 ] }
-# capture-linux (requires system libpipewire at build time)
+# capture-linux (requires system libpipewire at build time.
+# Arch/CachyOS ships PipeWire 1.6 + clang 22: pipewire 0.8/libspa 0.8 no longer
+# builds there (bindgen 0.69 emits an opaque spa_pod_builder), so track 0.10.)
 ashpd = { version = "0.7", optional = true, default-features = false, features = ["tokio"] }
-pipewire = { version = "0.8", optional = true, features = ["v0_3_44"] }
-libspa = { version = "0.8", optional = true }
+pipewire = { version = "0.10", optional = true, features = ["v1_0_0"] }
+libspa = { version = "0.10", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread"] }
 
 [features]

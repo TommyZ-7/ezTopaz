@@ -30,3 +30,12 @@ pnpm build && pnpm test
 ## 4. コミット規約
 - `feat:`, `fix:`, `docs:`, `ci:`, `chore:` prefix。
 - docs のみの変更は CI スキップされる前提。コードと docs を同 PR に混ぜない。
+
+## 5. CI結果確認義務
+- 各 `push` 後にCI結果を必ず確認する。赤のまま放置・次作業着手禁止。
+- PR作成時・マージ前にも全check緑を必ず確認する。緑以外でマージ禁止。
+```bash
+gh run list --branch <branch> --limit 5
+gh run watch <run-id> --exit-status
+gh pr checks <pr-number>
+```

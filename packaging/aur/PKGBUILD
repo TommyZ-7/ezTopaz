@@ -1,0 +1,36 @@
+# Maintainer: TommyZ-7 <https://github.com/TommyZ-7/ezTopaz>
+# Canonical PKGBUILD for the binary release (repacks the official deb).
+# This file lives in the upstream repo so CI can syntax-check it; publishing
+# to AUR is a manual copy to an `eztopaz-bin` AUR repo followed by:
+#   makepkg --printsrcinfo > .SRCINFO && git push
+# At publish time bump _tag/_debver/pkgver below, confirm the exact .deb
+# asset filename on the Release page, and fill sha256sums_x86_64
+# with the hash of the .deb from the GitHub Release page.
+
+pkgname=eztopaz-bin
+_pkgname=ezTopaz
+_tag=preview.05
+_debver=0.1.0-preview05
+pkgver=0.1.0_preview05
+pkgrel=1
+pkgdesc="Lightweight streamer for TopazChat (VRChat)"
+arch=('x86_64')
+url="https://github.com/TommyZ-7/ezTopaz"
+license=('MIT')
+depends=('cairo' 'desktop-file-utils' 'gdk-pixbuf2' 'glib2' 'gtk3'
+         'hicolor-icon-theme' 'libsoup' 'pango' 'webkit2gtk-4.1'
+         'pipewire' 'xdg-utils')
+optdepends=('xdg-desktop-portal-gnome: screen sharing picker on GNOME'
+            'xdg-desktop-portal-kde: screen sharing picker on KDE Plasma'
+            'xdg-desktop-portal-hyprland: screen sharing picker on Hyprland'
+            'xdg-desktop-portal-wlr: screen sharing picker on wlroots compositors (Sway, etc.)')
+options=('!strip' '!debug')
+install=${pkgname}.install
+source_x86_64=("${url}/releases/download/${_tag}/${_pkgname}_${_debver}_amd64.deb")
+# Maintainer: replace SKIP with the real sha256 of the .deb above.
+sha256sums_x86_64=('SKIP')
+
+package() {
+  # The deb carries usr/ + opt/ payloads; bsdtar auto-detects data.tar.* compression.
+  bsdtar -xf data.tar.* -C "${pkgdir}"
+}

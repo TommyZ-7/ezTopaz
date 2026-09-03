@@ -6,15 +6,12 @@ const BUILTIN_IDS = ["low", "mid", "high", "1080p"];
 
 export function ProfileSelector() {
   const { t } = useTranslation();
-  const { profiles, profileId, setProfileId, encoderOverride, setEncoderOverride, encoders } =
-    useStore((s) => ({
-      profiles: s.profiles,
-      profileId: s.profileId,
-      setProfileId: s.setProfileId,
-      encoderOverride: s.encoderOverride,
-      setEncoderOverride: s.setEncoderOverride,
-      encoders: s.encoders,
-    }));
+  const profiles = useStore((s) => s.profiles);
+  const profileId = useStore((s) => s.profileId);
+  const setProfileId = useStore((s) => s.setProfileId);
+  const encoderOverride = useStore((s) => s.encoderOverride);
+  const setEncoderOverride = useStore((s) => s.setEncoderOverride);
+  const encoders = useStore((s) => s.encoders);
 
   const profile = profiles?.profiles[profileId];
   const overBitrate =

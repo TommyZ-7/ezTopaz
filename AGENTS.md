@@ -39,3 +39,13 @@ gh run list --branch <branch> --limit 5
 gh run watch <run-id> --exit-status
 gh pr checks <pr-number>
 ```
+
+## 6. CI監視の自動化
+- `gh run watch` は annotation 取得で 403 になる環境があるため、原則ポーリング方式を使う。
+- フォアグラウンド shell は 120 秒で切れるため、監視は必ずバックグラウンド実行する。
+```bash
+# 対象 run の完了まで60秒間隔で監視 (最大60回)。完了通知で次の処理へ
+for i in $(seq 1 60); do s=$(gh run view <run-id> --json status,conclusion --jq '.status + "/" + .conclusion'); echo "$(date -u +%H:%M:%S) $s"; case "$s" in in_progress/*|queued/*|waiting/*|requested/*) sleep 60;; *) break;; esac; done; gh run view <run-id> --json status,conclusion,jobs --jq '{status, conclusion, jobs: [.jobs[] | {name, conclusion}]}'
+```
+- 再開方法: `gh run list --branch <branch> --limit 5` で対象 run-id を特定し、上記コマンドをバックグラウンドで再実行する。
+- 完了後の既定動作: 成功→自動マージ (`gh pr merge <n> --merge` 後 `main` へ切替・pull)、失敗→ログ解析して修正を試み branch 更新。

@@ -3,12 +3,22 @@ name: Release
 on:
   push:
     tags: ['preview.*']
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'eztopaz-core/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
-# タグ Release は重い + 冪等追記のためキャンセルしない
+# PRの連続pushは旧実行をキャンセルして節約。タグはrefが一意のため実質影響なし
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # Release bundles with the pinned FFmpeg bundled in (design §13.2, §4.4).

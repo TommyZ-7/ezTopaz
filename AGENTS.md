@@ -12,9 +12,11 @@
   - `push` は docs 系を除外 (`docs/**`, `**.md`, `LICENSE`, `resources/ffmpeg/README.txt`)
   - 同一 ref の旧実行は自動キャンセル (`cancel-in-progress: true`)
 - `.github/workflows/release.yml` (重量: ffmpeg同梱 deb/nsis + Release公開)
-  - `push: tags: ['preview.*']`, `workflow_dispatch` のみ
-  - 普段の commit では走らない。確認したい時のみ手動実行:
+  - `push: tags: ['preview.*']`, `pull_request` (paths限定), `workflow_dispatch`
+  - PRでは `src-tauri/**`, `eztopaz-core/**`, `Cargo.*`, `package.json`, `pnpm-*`, `release.yml` 変更時のみbundle実行 (mainのリリース可能性担保)
+  - docsのみ・UIのみのPRでは走らない。確認したい時のみ手動実行:
     - `gh workflow run Release --ref <branch>`
+  - Release公開 (`gh release create/upload`) はタグ時のみ実行
 
 ## 3. push 前ローカル検証 (CI 往復を減らす)
 ```bash

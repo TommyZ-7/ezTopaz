@@ -730,14 +730,15 @@ pub fn list_audio_devices() -> Result<AudioDevices> {
 
     tl.start();
     std::thread::sleep(Duration::from_millis(500)); // ponytail: fixed probe window; sync-callback when it matters
+    // stop() blocks until the loop thread has exited: never wait() after it.
+    // Nobody will ever signal that waiter again, so waiting here parks the
+    // caller forever (this hung boot-time getAudioDevices under a live
+    // daemon; without a daemon the early return above masked it).
     tl.stop();
-    // wait() releases the loop lock while waiting, so it must be called with
-    // the guard held (unlocked it is UB and can return immediately).
     // Same locked teardown as the capture threads: dropping proxies without
     // the loop lock trips "called from wrong context" warnings.
     {
         let _guard = tl.lock();
-        tl.wait();
         drop(_listener);
         drop(registry);
         drop(core);
@@ -773,6 +774,26 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Device probe must return promptly: it runs on the boot path
+    /// (getAudioDevices gates the splash screen). Regression: a tl.wait()
+    /// after tl.stop() parked forever — nothing signals a stopped loop —
+    /// hanging startup whenever a live daemon made connect() succeed
+    /// (without a daemon the early return masked it, so CI stayed green).
+    /// The probe runs on a thread with a timeout so a regression fails the
+    /// test instead of hanging the suite (process exit cleans the stray thread).
+    #[test]
+    fn probe_returns_promptly() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(list_audio_devices().map(|d| d.apps.len()));
+        });
+        match rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(Ok(n)) => eprintln!("probe ok: {n} apps"),
+            Ok(Err(e)) => panic!("probe failed: {e}"),
+            Err(_) => panic!("probe hung: never wait() on a stopped loop"),
+        }
     }
 
     /// Rapid start/stop cycles against the real daemon (when present):

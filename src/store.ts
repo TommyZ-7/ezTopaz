@@ -43,10 +43,16 @@ interface AppState {
   backendError: string | null;
   preview: string | null;
   vu: VuMeter;
+  // F-1: startup phases. `booted` gates the splash screen (fast base data),
+  // `encodersLoading` tracks the slow background encoder probe.
+  booted: boolean;
+  encodersLoading: boolean;
   setPreview: (url: string | null) => void;
   refreshVu: () => Promise<void>;
 
   loadAll: () => Promise<void>;
+  loadBase: () => Promise<void>;
+  loadEncoders: () => Promise<void>;
   setScreen: (s: ScreenTarget) => void;
   setAudioMode: (m: "system" | "apps") => void;
   toggleApp: (id: string) => void;
@@ -114,13 +120,14 @@ export const useStore = create<AppState>((set, get) => ({
   backendError: null,
   preview: null,
   vu: { apps: {}, mic: null, master: { peak: 0, rms: 0 } },
+  booted: false,
+  encodersLoading: true,
 
-  async loadAll() {
-    const [displays, windows, audioDevices, encoders, profiles] = await Promise.allSettled([
+  async loadBase() {
+    const [displays, windows, audioDevices, profiles] = await Promise.allSettled([
       api.getDisplays(),
       api.getWindows(),
       api.getAudioDevices(),
-      api.probeEncoders(),
       api.getProfiles(),
     ]);
     const backendError =
@@ -130,9 +137,9 @@ export const useStore = create<AppState>((set, get) => ({
       displays: displays.status === "fulfilled" ? displays.value : [],
       windows: windows.status === "fulfilled" ? windows.value : [],
       audioDevices: audioDevices.status === "fulfilled" ? audioDevices.value : null,
-      encoders: encoders.status === "fulfilled" ? encoders.value : [],
       profiles: cfg,
       backendError,
+      booted: true,
       ...(cfg
         ? {
             ingestUrl: cfg.ingestUrl,
@@ -146,6 +153,23 @@ export const useStore = create<AppState>((set, get) => ({
           }
         : {}),
     });
+  },
+
+  async loadEncoders() {
+    set({ encodersLoading: true });
+    try {
+      const encoders = await api.probeEncoders();
+      set({ encoders });
+    } catch {
+      set({ encoders: [] });
+    } finally {
+      set({ encodersLoading: false });
+    }
+  },
+
+  async loadAll() {
+    await get().loadBase();
+    await get().loadEncoders();
   },
 
   setScreen: (screen) => {

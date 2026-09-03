@@ -12,6 +12,7 @@ export function ProfileSelector() {
   const encoderOverride = useStore((s) => s.encoderOverride);
   const setEncoderOverride = useStore((s) => s.setEncoderOverride);
   const encoders = useStore((s) => s.encoders);
+  const encodersLoading = useStore((s) => s.encodersLoading);
 
   const profile = profiles?.profiles[profileId];
   const overBitrate =
@@ -70,6 +71,9 @@ export function ProfileSelector() {
           <option value="h264_vulkan">h264_vulkan</option>
         </select>
       </label>
+      {encodersLoading && (
+        <p className="text-xs text-zinc-500">{t("profile.checkingEncoders")}</p>
+      )}
     </section>
   );
 }

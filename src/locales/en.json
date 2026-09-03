@@ -6,7 +6,8 @@
     "save": "Save",
     "saved": "Saved",
     "logs": "Open logs",
-    "licenses": "Licenses (MIT / FFmpeg GPL)"
+    "licenses": "Licenses (MIT / FFmpeg GPL)",
+    "loading": "Loading…"
   },
   "screen": {
     "tab": "Screen",
@@ -31,6 +32,7 @@
     "p1080": "1080p",
     "encoder": "Encoder",
     "auto": "Auto",
+    "checkingEncoders": "Checking encoders…",
     "warn1080p": "At Topaz's 2000kbps cap, quality suffers. 720p recommended",
     "overBitrate": "Exceeds Topaz limits (video ≤2000k / audio ≤320k)"
   },

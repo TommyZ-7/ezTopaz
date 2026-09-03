@@ -290,7 +290,7 @@ fn launch_pipeline(
     let direct = eztopaz_core::ffmpeg::hw::parse_direct_input(sess.cfg.direct_input.as_deref());
 
     #[cfg(feature = "capture-windows")]
-    let proc = match &direct {
+    let mut proc = match &direct {
         Some(_) => {
             let argv = eztopaz_core::ffmpeg::hw::build_direct_args(
                 &sess.profile,
@@ -304,15 +304,24 @@ fn launch_pipeline(
         None => StreamProcess::spawn(&ffmpeg, &sess.plan.ffmpeg_args).map_err(err)?,
     };
     #[cfg(feature = "capture-linux")]
-    let proc = StreamProcess::spawn(&ffmpeg, &sess.plan.ffmpeg_args).map_err(err)?;
+    let mut proc = StreamProcess::spawn(&ffmpeg, &sess.plan.ffmpeg_args).map_err(err)?;
 
-    // blocks until ffmpeg opens/connected each pipe (design §4.1)
-    let audio_writer = pipes::open_writer(&sess.plan.audio_pipe).map_err(err)?;
-    let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
-
+    // Pipe open order: ffmpeg opens the video input first, so both writers
+    // connect concurrently — a sequential audio-first open deadlocks (each
+    // side waits for the other) and freezes the sync start_stream command.
+    // Timeout/error kills the spawned ffmpeg and returns a clear error.
     #[cfg(feature = "capture-linux")]
     {
-        let video_writer = pipes::open_writer(&sess.plan.video_pipe).map_err(err)?;
+        let (video_writer, audio_writer) = pipes::open_writers_concurrently(
+            &sess.plan.video_pipe,
+            &sess.plan.audio_pipe,
+            pipes::PIPE_OPEN_TIMEOUT,
+        )
+        .map_err(|e| {
+            proc.stop();
+            err(e)
+        })?;
+        let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
         // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
         let vsink = VideoSink::spawn_for_transport(
             video_writer,
@@ -332,12 +341,30 @@ fn launch_pipeline(
     {
         use crate::capture::windows::ScreenHandle;
         if direct.is_some() {
+            // ddagrab: no video pipe; the single audio connect is still
+            // bounded so a missing ffmpeg reader can't freeze start_stream.
+            let audio_writer =
+                pipes::open_writer_timeout(&sess.plan.audio_pipe, pipes::PIPE_OPEN_TIMEOUT)
+                    .map_err(|e| {
+                        proc.stop();
+                        err(e)
+                    })?;
+            let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
             let audio_cap =
                 crate::capture::windows::start_audio(&sess.cfg.audio, asink).map_err(err)?;
             *state.screen.lock().unwrap() = Some(ScreenHandle::Direct);
             *state.audio_cap.lock().unwrap() = Some(audio_cap);
         } else {
-            let video_writer = pipes::open_writer(&sess.plan.video_pipe).map_err(err)?;
+            let (video_writer, audio_writer) = pipes::open_writers_concurrently(
+                &sess.plan.video_pipe,
+                &sess.plan.audio_pipe,
+                pipes::PIPE_OPEN_TIMEOUT,
+            )
+            .map_err(|e| {
+                proc.stop();
+                err(e)
+            })?;
+            let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
             // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
             let vsink = VideoSink::spawn_for_transport(
                 video_writer,
@@ -362,7 +389,6 @@ fn launch_pipeline(
         }
     }
 
-    let mut proc = proc;
     proc.retry_count = retry;
     Ok(proc)
 }

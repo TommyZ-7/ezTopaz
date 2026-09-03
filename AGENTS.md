@@ -7,6 +7,9 @@
 - リリースは `preview.*` タグ push のみ。例: `git tag preview.04 && git push origin preview.04`
 - AI はユーザーの明示的な指示なしにリリース関連操作 (タグ作成/push、Release 手動実行、`gh release` 公開) を行わない
 - 並行作業時は `git worktree` を使う (同一workdirでのbranch切替禁止)。詳細は `parallel-worktree` skill
+- マージ完了後は `main` に切替・pullする。作業branchに留まらない
+- マージ済み作業branchは local + remote を削除する (`git branch -d` + `git push origin --delete`)
+- 新規branchは必ず更新済み `main` から切る (事前に `checkout main && pull` と `status` clean確認)
 
 ## 2. CI 発火条件 (Actions 消費抑制のため分割)
 - `.github/workflows/ci.yml` (軽量: linux test + windows check + frontend)

@@ -14,8 +14,11 @@ export function ScreenSelector() {
     try {
       const target = await api.startPortalPicker();
       useStore.getState().setScreen(target);
-    } catch {
-      /* backend absent */
+    } catch (e) {
+      // Surface portal failures (e.g. no D-Bus session under sudo, user
+      // cancelled, compositor rejected): silent catch here once made the
+      // button look dead with no clue why.
+      useStore.getState().showToast(String(e));
     }
   };
 

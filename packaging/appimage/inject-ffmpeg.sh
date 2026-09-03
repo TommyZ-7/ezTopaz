@@ -19,9 +19,11 @@
 # Usage: inject-ffmpeg.sh <appimage> <ffmpeg-bin> <appimagetool>
 set -euo pipefail
 
-APPIMAGE="$1"
-FFMPEG_BIN="$2"
-APPIMAGETOOL="$3"
+# Absolute paths first: the script cd's into a mktemp workdir below,
+# so relative caller paths would no longer resolve (exit 127).
+APPIMAGE=$(readlink -f "$1")
+FFMPEG_BIN=$(readlink -f "$2")
+APPIMAGETOOL=$(readlink -f "$3")
 
 for f in "$APPIMAGE" "$FFMPEG_BIN" "$APPIMAGETOOL"; do
   [ -e "$f" ] || { echo "inject-ffmpeg: not found: $f" >&2; exit 1; }

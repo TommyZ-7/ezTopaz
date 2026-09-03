@@ -6,17 +6,19 @@ description: Monitor GitHub Actions runs for a branch to completion with dynamic
 ## Workflow
 
 1. Identify target: `BRANCH` (e.g. `fix/xxx`) and `WF` (`CI` or `Release`).
-2. Run `scripts/ci-watch.sh <branch> [workflow]` **in background** (foreground shells time out after 120s).
-   Launch exactly as follows (two statements; do NOT one-line it):
+2. shellツールの`background: true`で `scripts/ci-watch.sh <branch> [workflow]` を起動する
+   (フォアグラウンドは120秒で切れるため不可)。
 
    ```bash
-   export BRANCH=<branch> WF=<workflow>  # WF: CI or Release
-   nohup .opencode/skills/ci-watch/scripts/ci-watch.sh "$BRANCH" "$WF" > /tmp/opencode/ci-watch.log 2>&1 &
+   .opencode/skills/ci-watch/scripts/ci-watch.sh <branch> <workflow> > /tmp/opencode/ci-watch.log 2>&1
    ```
 
-   ⚠️ `BRANCH=... nohup ... "$BRANCH" &` の一行書きは禁止。
-   `VAR=...` prefixは`nohup`へのenvにしかならず、同行の`"$VAR"`展開時点では
-   空のためusage終了する (2026-09-03に実績あり).
+   - `<workflow>` は `CI` または `Release`。途中経過は `tail /tmp/opencode/ci-watch.log` で確認。
+   - コマンド文への `&`/`nohup` 付加は禁止。シェル内バックグラウンド化はツール管理外と
+     なり、TUIのshell表示も完了通知も出ない (2026-09-03に実績あり)。
+   - `export` と起動は別文にすること。`BRANCH=... cmd "$BRANCH"` の一行書きは禁止
+     (`VAR=...` prefixは起動コマンドへのenvにしかならず、同行の `"$VAR"` 展開時点では
+     空になる。スクリプト側にenvフォールバックはあるが当てにしないこと)。
 3. On completion notification, check the final summary and act:
    - success → merge flow (`gh pr merge <n> --merge`, switch to `main`, pull).
    - failure → fetch logs, analyze, fix on the branch.

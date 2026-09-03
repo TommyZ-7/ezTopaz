@@ -6,20 +6,32 @@ import { genericKeyWarning, playbackUrls, validateStreamKey } from "../lib/urls"
 
 export function StreamControl() {
   const { t } = useTranslation();
-  const s = useStore();
-  const keyError = validateStreamKey(s.streamKey);
-  const genericWarn = s.streamKey.length > 0 && genericKeyWarning(s.streamKey);
+  const streamKey = useStore((s) => s.streamKey);
+  const ingestUrl = useStore((s) => s.ingestUrl);
+  const isLive = useStore((s) => s.isLive);
+  const backendError = useStore((s) => s.backendError);
+  const screenId = useStore((s) => s.screen.id);
+  const previewing = useStore((s) => s.previewing);
+  const showToast = useStore((s) => s.showToast);
+  const setIngestUrl = useStore((s) => s.setIngestUrl);
+  const setStreamKey = useStore((s) => s.setStreamKey);
+  const startStream = useStore((s) => s.startStream);
+  const stopStream = useStore((s) => s.stopStream);
+  const startPreview = useStore((s) => s.startPreview);
+  const stopPreview = useStore((s) => s.stopPreview);
+  const keyError = validateStreamKey(streamKey);
+  const genericWarn = streamKey.length > 0 && genericKeyWarning(streamKey);
   const [backendMissing, setBackendMissing] = useState(false);
 
-  const urls = playbackUrls(s.ingestUrl, s.streamKey || "your-key");
-  const canStart = !s.isLive && s.streamKey.length > 0 && keyError === null && !backendMissing;
+  const urls = playbackUrls(ingestUrl, streamKey || "your-key");
+  const canStart = !isLive && streamKey.length > 0 && keyError === null && !backendMissing;
 
   useEffect(() => {
     // surface the start error once (backend without capture)
-    if (s.backendError?.includes("not implemented") || s.backendError?.includes("NotImplemented")) {
+    if (backendError?.includes("not implemented") || backendError?.includes("NotImplemented")) {
       setBackendMissing(true);
     }
-  }, [s.backendError]);
+  }, [backendError]);
 
   const copy = async (text: string) => {
     try {
@@ -27,7 +39,7 @@ export function StreamControl() {
     } catch {
       await navigator.clipboard.writeText(text).catch(() => undefined);
     }
-    s.showToast(t("stream.copied"));
+    showToast(t("stream.copied"));
   };
 
   return (
@@ -36,8 +48,8 @@ export function StreamControl() {
         {t("stream.ingest")}
         <input
           className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1"
-          value={s.ingestUrl}
-          onChange={(e) => s.setIngestUrl(e.target.value)}
+          value={ingestUrl}
+          onChange={(e) => setIngestUrl(e.target.value)}
         />
       </label>
       <label className="block text-sm">
@@ -46,8 +58,8 @@ export function StreamControl() {
           className={`mt-1 w-full rounded border bg-zinc-800 px-2 py-1 ${
             keyError ? "border-red-600" : "border-zinc-700"
           }`}
-          value={s.streamKey}
-          onChange={(e) => s.setStreamKey(e.target.value)}
+          value={streamKey}
+          onChange={(e) => setStreamKey(e.target.value)}
           placeholder="my-event-123"
         />
         {keyError && <span className="text-xs text-red-500">{t("stream.keyInvalid")}</span>}
@@ -63,33 +75,33 @@ export function StreamControl() {
 
       <button
         className={`w-full rounded py-3 text-lg font-bold ${
-          s.isLive
+          isLive
             ? "bg-red-600 hover:bg-red-500 text-white"
             : canStart
               ? "bg-zinc-200 text-zinc-900 hover:bg-white"
               : "cursor-not-allowed bg-zinc-700 text-zinc-500"
         }`}
-        disabled={!canStart && !s.isLive}
-        onClick={() => (s.isLive ? void s.stopStream() : void s.startStream())}
+        disabled={!canStart && !isLive}
+        onClick={() => (isLive ? void stopStream() : void startStream())}
       >
-        {s.isLive ? `■ ${t("stream.stop")}` : `● ${t("stream.start")}`}
+        {isLive ? `■ ${t("stream.stop")}` : `● ${t("stream.start")}`}
       </button>
-      {!s.isLive && (
+      {!isLive && (
         <button
           className={`w-full rounded border py-2 text-sm ${
-            s.previewing
+            previewing
               ? "border-sky-500 text-sky-400 hover:border-sky-400"
-              : s.screen.id
+              : screenId
                 ? "border-zinc-600 text-zinc-300 hover:border-zinc-400"
                 : "cursor-not-allowed border-zinc-800 text-zinc-600"
           }`}
-          disabled={!s.screen.id && !s.previewing}
-          onClick={() => (s.previewing ? void s.stopPreview() : void s.startPreview())}
+          disabled={!screenId && !previewing}
+          onClick={() => (previewing ? void stopPreview() : void startPreview())}
         >
-          {s.previewing ? t("stream.previewStop") : t("stream.previewStart")}
+          {previewing ? t("stream.previewStop") : t("stream.previewStart")}
         </button>
       )}
-      {!s.isLive && !s.screen.id && !s.previewing && (
+      {!isLive && !screenId && !previewing && (
         <p className="text-center text-xs text-zinc-500">{t("stream.previewNeedsSource")}</p>
       )}
       {backendMissing && (

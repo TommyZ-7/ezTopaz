@@ -4,14 +4,12 @@ import { api } from "../lib/api";
 
 export function ScreenSelector() {
   const { t } = useTranslation();
-  const { displays, windows, screen, setScreen, backendError, preview } = useStore((s) => ({
-    displays: s.displays,
-    windows: s.windows,
-    screen: s.screen,
-    setScreen: s.setScreen,
-    backendError: s.backendError,
-    preview: s.preview,
-  }));
+  const displays = useStore((s) => s.displays);
+  const windows = useStore((s) => s.windows);
+  const screen = useStore((s) => s.screen);
+  const setScreen = useStore((s) => s.setScreen);
+  const backendError = useStore((s) => s.backendError);
+  const preview = useStore((s) => s.preview);
   const startPortalPicker = async () => {
     try {
       const target = await api.startPortalPicker();

@@ -16,18 +16,15 @@ function VuBar({ level }: { level: number }) {
 
 export function AudioSelector() {
   const { t } = useTranslation();
-  const { audioMode, setAudioMode, audioDevices, selectedApps, toggleApp, mic, setMic, vu, isLive } =
-    useStore((s) => ({
-      audioMode: s.audioMode,
-      setAudioMode: s.setAudioMode,
-      audioDevices: s.audioDevices,
-      selectedApps: s.selectedApps,
-      toggleApp: s.toggleApp,
-      mic: s.mic,
-      setMic: s.setMic,
-      vu: s.vu,
-      isLive: s.isLive,
-    }));
+  const audioMode = useStore((s) => s.audioMode);
+  const setAudioMode = useStore((s) => s.setAudioMode);
+  const audioDevices = useStore((s) => s.audioDevices);
+  const selectedApps = useStore((s) => s.selectedApps);
+  const toggleApp = useStore((s) => s.toggleApp);
+  const mic = useStore((s) => s.mic);
+  const setMic = useStore((s) => s.setMic);
+  const vu = useStore((s) => s.vu);
+  const isLive = useStore((s) => s.isLive);
 
   // F-AU-03/04: live gain/mute changes reach the running mixer
   const pushMix = () => {

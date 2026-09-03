@@ -20,8 +20,8 @@ use pw::properties::properties;
 use pw::spa::param::ParamType;
 use pw::spa::pod::Pod;
 use std::os::fd::{AsRawFd, FromRawFd};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
@@ -88,19 +88,20 @@ pub async fn portal_picker() -> Result<ScreenTarget> {
 pub struct ScreenCapture {
     pub sink: VideoSink,
     stop: Arc<AtomicBool>,
-    /// pw_thread_loop raw pointer; pw_thread_loop_stop is callable cross-thread
-    loop_ptr: Arc<AtomicUsize>,
+    /// Wake channel for the worker's park loop. The worker owns the PipeWire
+    /// loop and stops it itself; stop() only signals + joins, never touching
+    /// PipeWire from the outside (no raw loop pointer, no cross-thread stop).
+    wake: Arc<(Mutex<bool>, Condvar)>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ScreenCapture {
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        let ptr = self.loop_ptr.swap(0, Ordering::SeqCst);
-        if ptr != 0 {
-            unsafe {
-                pw::sys::pw_thread_loop_stop(ptr as *mut pw::sys::pw_thread_loop);
-            }
+        {
+            let (lk, cv) = &*self.wake;
+            *lk.lock().unwrap() = true;
+            cv.notify_one();
         }
         if let Some(h) = self.handle.take() {
             let _ = h.join();
@@ -131,30 +132,52 @@ pub fn start_screen(
         (fd, portal.node_id)
     };
     let stop = Arc::new(AtomicBool::new(false));
-    let loop_ptr = Arc::new(AtomicUsize::new(0));
-    let loop_ptr2 = loop_ptr.clone();
+    let wake: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
+    let wake2 = wake.clone();
     let stop2 = stop.clone();
     let sink2 = sink.clone();
     let preview_slot: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
     let preview_slot2 = preview_slot.clone();
     let dst_w = profile.w;
     let dst_h = profile.h;
+    // Setup runs on the spawned thread; the result is reported back so the
+    // caller fails fast instead of leaking a dead capture. Without this,
+    // thread-internal failures were only eprintln! noise while the command
+    // returned Ok (dead preview with no error surfaced).
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
+    let fail_tx = ready_tx.clone();
+    let fail = move |msg: String| {
+        eprintln!("pw video: {msg}");
+        let _ = fail_tx.send(Err(msg));
+    };
 
     let handle = std::thread::Builder::new()
         .name("pw-video".into())
         .spawn(move || {
             let tl = match unsafe { pw::thread_loop::ThreadLoopBox::new(Some("eztopaz-video"), None) } {
                 Ok(t) => t,
-                Err(e) => return eprintln!("pw video: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire loop: {e}"));
+                    return;
+                }
             };
-            loop_ptr2.store(tl.as_raw_ptr() as usize, Ordering::SeqCst);
+            // Every PipeWire object call below requires the loop lock when
+            // made from outside the loop thread. The guard is held for the
+            // whole setup and released before the loop starts parking below.
+            let _pw_guard = tl.lock();
             let context = match pw::context::ContextBox::new(tl.loop_(), None) {
                 Ok(c) => c,
-                Err(e) => return eprintln!("pw video: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire context: {e}"));
+                    return;
+                }
             };
             let core = match context.connect_fd(fd, None) {
                 Ok(c) => c,
-                Err(e) => return eprintln!("pw video: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire connect: {e}"));
+                    return;
+                }
             };
             let props = properties! {
                 *pw::keys::MEDIA_TYPE => "Video",
@@ -163,7 +186,10 @@ pub fn start_screen(
             };
             let stream = match pw::stream::StreamBox::new(&core, "eztopaz-video", props) {
                 Ok(s) => s,
-                Err(e) => return eprintln!("pw video: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire stream: {e}"));
+                    return;
+                }
             };
 
             struct Ud {
@@ -177,14 +203,21 @@ pub fn start_screen(
             let ud = Ud {
                 format: pw::spa::param::video::VideoInfoRaw::new(),
                 sink: sink2,
-                stop: stop2,
+                stop: stop2.clone(),
                 preview_frame: preview_slot2,
                 dst_w,
                 dst_h,
             };
 
-            let _listener = stream
+            let _listener = match stream
                 .add_local_listener_with_user_data(ud)
+                .state_changed(|_, _, _old, new| {
+                    // Error states carry the only visible reason when a
+                    // connected stream never delivers (no node, no frames).
+                    if let pw::stream::StreamState::Error(e) = new {
+                        eprintln!("pw video: stream error: {e}");
+                    }
+                })
                 .param_changed(|_, ud, id, param| {
                     let Some(param) = param else { return };
                     if id != ParamType::Format.as_raw() {
@@ -215,10 +248,14 @@ pub fn start_screen(
                         }
                     }
                 })
-                .register();
-            if let Err(e) = _listener {
-                return eprintln!("pw video: {e}");
-            }
+                .register()
+            {
+                Ok(l) => l,
+                Err(e) => {
+                    fail(format!("PipeWire listener: {e}"));
+                    return;
+                }
+            };
 
             // negotiate BGRA; source size/framerate come back in the negotiated
             // Format (param_changed above). Build the pod with the official macros.
@@ -246,7 +283,10 @@ pub fn start_screen(
                 &pw::spa::pod::Value::Object(obj),
             ) {
                 Ok(v) => v.0.into_inner(),
-                Err(e) => return eprintln!("pw video: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire format pod: {e}"));
+                    return;
+                }
             };
             let mut params = [Pod::from_bytes(&values).unwrap()];
 
@@ -258,13 +298,69 @@ pub fn start_screen(
                     | pw::stream::StreamFlags::RT_PROCESS,
                 &mut params,
             ) {
-                return eprintln!("pw video: {e}");
+                fail(format!("PipeWire stream connect (node {node_id}): {e}"));
+                return;
+            }
+            // Request dataflow explicitly instead of relying on the default
+            // active state; a refusal surfaces through the fail-fast gate.
+            if let Err(e) = stream.set_active(true) {
+                fail(format!("PipeWire stream activate (node {node_id}): {e}"));
+                return;
             }
 
-            tl.start();
-            tl.wait();
+            let _ = ready_tx.send(Ok(()));
+            drop(_pw_guard);
+            // A stop() that lands during setup is already recorded in the
+            // stop flag / wake channel: skip parking and go straight to a
+            // uniform teardown (loop never started: stop() is skipped).
+            let parked = !stop2.load(Ordering::Relaxed);
+            if parked {
+                tl.start();
+                // Park on OUR condvar, never tl.wait(): the PipeWire wait must
+                // be called with the loop lock held (it is a pthread_cond_wait
+                // on the loop mutex — unlocked it returns immediately, which
+                // tore the stream down at once: the silent Connecting ->
+                // Unconnected with no node and no data). Parking here also
+                // avoids a second waiter racing stop()'s internal wait.
+                let (lk, cv) = &*wake2;
+                let mut stopped = lk.lock().unwrap();
+                while !*stopped {
+                    stopped = cv.wait(stopped).unwrap();
+                }
+                // Worker thread (not the loop thread): may block until the
+                // loop thread exits. Must run without holding the pw guard.
+                tl.stop();
+            }
+            // Locked teardown: destroying streams/proxies without holding the
+            // loop lock trips "called from wrong context" and can leave zombie
+            // streams behind (LizardByte/Sunshine#4705 pattern).
+            {
+                let _guard = tl.lock();
+                let _ = stream.set_active(false);
+                let _ = stream.disconnect();
+                drop(_listener);
+                drop(stream);
+                drop(core);
+                drop(context);
+            }
+            // tl drops here; the loop is stopped (or never started), so the
+            // destroy is clean.
         })
         .map_err(err)?;
+
+    // Fail fast when setup died (or hung): without this gate the command
+    // returned Ok while the thread was already gone — dead preview, no error.
+    match ready_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => {}
+        outcome => {
+            let msg = match outcome {
+                Ok(Err(e)) => e,
+                _ => "PipeWire capture setup timed out".to_string(),
+            };
+            ScreenCapture { sink, stop, wake, handle: Some(handle) }.stop();
+            return Err(CaptureError::Failed(msg));
+        }
+    }
 
     // F-SC-03 preview: 1fps 640x360 PNG → `stream://preview` (design §6.4).
     // Runs off the PipeWire RT thread; the process callback parks the newest
@@ -306,7 +402,7 @@ pub fn start_screen(
             .map_err(err)?;
     }
 
-    Ok(ScreenCapture { sink, stop, loop_ptr, handle: Some(handle) })
+    Ok(ScreenCapture { sink, stop, wake, handle: Some(handle) })
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +410,7 @@ pub fn start_screen(
 
 pub struct AudioCapture {
     stop: Arc<AtomicBool>,
-    loop_ptr: Arc<AtomicUsize>,
+    wake: Arc<(Mutex<bool>, Condvar)>,
     handle: Option<std::thread::JoinHandle<()>>,
     pub sink: Option<AudioSink>,
 }
@@ -322,11 +418,10 @@ pub struct AudioCapture {
 impl AudioCapture {
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        let ptr = self.loop_ptr.swap(0, Ordering::SeqCst);
-        if ptr != 0 {
-            unsafe {
-                pw::sys::pw_thread_loop_stop(ptr as *mut pw::sys::pw_thread_loop);
-            }
+        {
+            let (lk, cv) = &*self.wake;
+            *lk.lock().unwrap() = true;
+            cv.notify_one();
         }
         if let Some(h) = self.handle.take() {
             let _ = h.join();
@@ -373,29 +468,51 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
     }
 
     let stop = Arc::new(AtomicBool::new(false));
-    let loop_ptr = Arc::new(AtomicUsize::new(0));
-    let loop_ptr2 = loop_ptr.clone();
+    let wake: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
+    let wake2 = wake.clone();
     let stop2 = stop.clone();
     let sink2 = sink.clone();
+    // Same fail-fast setup reporting as the video thread: callers must not
+    // get Ok for a dead capture.
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
+    let fail_tx = ready_tx.clone();
+    let fail = move |msg: String| {
+        eprintln!("pw audio: {msg}");
+        let _ = fail_tx.send(Err(msg));
+    };
 
     let handle = std::thread::Builder::new()
         .name("pw-audio".into())
         .spawn(move || {
             let tl = match unsafe { pw::thread_loop::ThreadLoopBox::new(Some("eztopaz-audio"), None) } {
                 Ok(t) => t,
-                Err(e) => return eprintln!("pw audio: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire loop: {e}"));
+                    return;
+                }
             };
-            loop_ptr2.store(tl.as_raw_ptr() as usize, Ordering::SeqCst);
+            // All PipeWire object calls under the loop lock (see video thread).
+            let _pw_guard = tl.lock();
             let context = match pw::context::ContextBox::new(tl.loop_(), None) {
                 Ok(c) => c,
-                Err(e) => return eprintln!("pw audio: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire context: {e}"));
+                    return;
+                }
             };
             let core = match context.connect(None) {
                 Ok(c) => c,
-                Err(e) => return eprintln!("pw audio: {e}"),
+                Err(e) => {
+                    fail(format!("PipeWire connect: {e}"));
+                    return;
+                }
             };
 
             let mut streams = Vec::new();
+            // Listeners unregister themselves on drop: keep them alive as long
+            // as the streams, otherwise no process callback ever fires (dead
+            // silence with no error).
+            let mut listeners = Vec::new();
             for (id, target, capture_sink) in specs {
                 let props = properties! {
                     *pw::keys::MEDIA_TYPE => "Audio",
@@ -415,7 +532,10 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
                 let stream = match pw::stream::StreamBox::new(&core, &format!("eztopaz-{id}"), props)
                 {
                     Ok(s) => s,
-                    Err(e) => return eprintln!("pw audio: {e}"),
+                    Err(e) => {
+                        fail(format!("PipeWire stream {id}: {e}"));
+                        return;
+                    }
                 };
 
                 struct Ud {
@@ -425,8 +545,16 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
                 }
                 let ud = Ud { sink: sink2.clone(), id: id.clone(), stop: stop2.clone() };
 
-                let listener = stream
+                let ud_id = id.clone();
+                match stream
                     .add_local_listener_with_user_data(ud)
+                    .state_changed(move |_, _, _old, new| {
+                        // Error states carry the only visible reason when a
+                        // connected stream never delivers (no node, no samples).
+                        if let pw::stream::StreamState::Error(e) = new {
+                            eprintln!("pw audio: stream error {ud_id}: {e}");
+                        }
+                    })
                     .process(|stream, ud| {
                         if ud.stop.load(Ordering::Relaxed) {
                             return;
@@ -448,9 +576,13 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
                             ud.sink.push(&ud.id, samples);
                         }
                     })
-                    .register();
-                if let Err(e) = listener {
-                    return eprintln!("pw audio: {e}");
+                    .register()
+                {
+                    Ok(l) => listeners.push(l),
+                    Err(e) => {
+                        fail(format!("PipeWire listener {id}: {e}"));
+                        return;
+                    }
                 }
 
                 let mut info = pw::spa::param::audio::AudioInfoRaw::new();
@@ -467,7 +599,10 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
                     &pw::spa::pod::Value::Object(obj),
                 ) {
                     Ok(v) => v.0.into_inner(),
-                    Err(e) => return eprintln!("pw audio: {e}"),
+                    Err(e) => {
+                        fail(format!("PipeWire format pod {id}: {e}"));
+                        return;
+                    }
                 };
                 let mut params = [Pod::from_bytes(&values).unwrap()];
 
@@ -479,17 +614,62 @@ pub fn start_audio(selection: &AudioSelection, sink: AudioSink) -> Result<AudioC
                         | pw::stream::StreamFlags::RT_PROCESS,
                     &mut params,
                 ) {
-                    return eprintln!("pw audio: {e}");
+                    fail(format!("PipeWire stream connect {id}: {e}"));
+                    return;
+                }
+                // Request dataflow explicitly (see the video thread).
+                if let Err(e) = stream.set_active(true) {
+                    fail(format!("PipeWire stream activate {id}: {e}"));
+                    return;
                 }
                 streams.push(stream);
             }
 
-            tl.start();
-            tl.wait();
+            let _ = ready_tx.send(Ok(()));
+            drop(_pw_guard);
+            // Same park/stop discipline as the video thread: never tl.wait()
+            // (must hold the loop lock; unlocked it misbehaves), park on our
+            // own condvar instead.
+            let parked = !stop2.load(Ordering::Relaxed);
+            if parked {
+                tl.start();
+                let (lk, cv) = &*wake2;
+                let mut stopped = lk.lock().unwrap();
+                while !*stopped {
+                    stopped = cv.wait(stopped).unwrap();
+                }
+                tl.stop();
+            }
+            // Locked teardown (see the video thread).
+            {
+                let _guard = tl.lock();
+                for s in &streams {
+                    let _ = s.set_active(false);
+                    let _ = s.disconnect();
+                }
+                drop(listeners);
+                drop(streams);
+                drop(core);
+                drop(context);
+            }
+            // tl drops here; stopped (or never started), so destroy is clean.
         })
         .map_err(err)?;
 
-    Ok(AudioCapture { stop, loop_ptr, handle: Some(handle), sink: Some(sink) })
+    // Fail fast when setup died (or hung); see start_screen.
+    match ready_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => {}
+        outcome => {
+            let msg = match outcome {
+                Ok(Err(e)) => e,
+                _ => "PipeWire audio setup timed out".to_string(),
+            };
+            AudioCapture { stop, wake, handle: Some(handle), sink: Some(sink) }.stop();
+            return Err(CaptureError::Failed(msg));
+        }
+    }
+
+    Ok(AudioCapture { stop, wake, handle: Some(handle), sink: Some(sink) })
 }
 
 // ---------------------------------------------------------------------------
@@ -551,8 +731,107 @@ pub fn list_audio_devices() -> Result<AudioDevices> {
     tl.start();
     std::thread::sleep(Duration::from_millis(500)); // ponytail: fixed probe window; sync-callback when it matters
     tl.stop();
-    tl.wait();
+    // wait() releases the loop lock while waiting, so it must be called with
+    // the guard held (unlocked it is UB and can return immediately).
+    // Same locked teardown as the capture threads: dropping proxies without
+    // the loop lock trips "called from wrong context" warnings.
+    {
+        let _guard = tl.lock();
+        tl.wait();
+        drop(_listener);
+        drop(registry);
+        drop(core);
+        drop(context);
+    }
 
     let apps = ud.lock().unwrap().apps.clone();
     Ok(AudioDevices { inputs, outputs: Vec::new(), apps })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eztopaz_core::audio::{AudioSink, Mixer, SourceState};
+    use eztopaz_core::config::MicSource;
+    use eztopaz_core::ipc_types::AudioSelection;
+
+    fn pw_dump() -> Option<String> {
+        std::process::Command::new("pw-dump")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+    }
+
+    fn eztopaz_nodes() -> Vec<String> {
+        pw_dump()
+            .map(|out| {
+                out.lines()
+                    .filter(|l| l.contains("eztopaz-"))
+                    .take(5)
+                    .map(|l| l.trim().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Rapid start/stop cycles against the real daemon (when present):
+    /// - setup failures surface as Err (fail-fast, never a silent dead capture)
+    /// - teardown leaves no zombie eztopaz-* nodes behind
+    /// - process listeners stay registered: mixed PCM reaches the file
+    /// Without a daemon (CI) only the fail-fast Err path is asserted.
+    #[test]
+    fn audio_start_stop_cycle() {
+        let daemon = pw_dump().is_some();
+        let sink_present = pw_dump()
+            .map(|out| out.contains("\"media.class\": \"Audio/Sink\""))
+            .unwrap_or(false);
+        // Snapshot ambient eztopaz-* nodes (another instance may be running);
+        // only nodes created by this test may remain afterwards.
+        let before = eztopaz_nodes();
+        let mut wrote_bytes = 0u64;
+        for i in 0..3 {
+            let path = std::env::temp_dir().join(format!("eztopaz-test-audio-{i}.pcm"));
+            let _ = std::fs::remove_file(&path);
+            let file = std::fs::File::create(&path).unwrap();
+            let mixer = Arc::new(Mutex::new(Mixer {
+                apps: Default::default(),
+                mic: SourceState { gain: 1.0, muted: false, enabled: false },
+            }));
+            let asink = AudioSink::spawn(file, mixer).unwrap();
+            let sel = AudioSelection {
+                mode: "system".into(),
+                apps: Vec::new(),
+                mic: MicSource {
+                    device: "default".into(),
+                    enabled: false,
+                    muted: false,
+                    gain: 1.0,
+                },
+            };
+            let mut cap = match start_audio(&sel, asink) {
+                Ok(c) => c,
+                Err(_) => {
+                    assert!(!daemon, "start_audio failed despite a live daemon");
+                    return;
+                }
+            };
+            std::thread::sleep(Duration::from_millis(800));
+            cap.stop();
+            wrote_bytes = wrote_bytes.max(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0));
+            let _ = std::fs::remove_file(&path);
+        }
+        if daemon {
+            let leaked: Vec<_> = eztopaz_nodes()
+                .into_iter()
+                .filter(|n| !before.contains(n))
+                .collect();
+            assert!(leaked.is_empty(), "leaked PipeWire nodes: {leaked:?}");
+            // Callbacks only fire when a monitor exists; without sinks there is
+            // nothing to capture, so data flow is asserted only then.
+            if sink_present {
+                assert!(wrote_bytes > 0, "no PCM flowed: process listeners dead?");
+            }
+        }
+    }
 }

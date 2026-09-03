@@ -67,4 +67,6 @@ git tag preview.04 && git push origin preview.04
 4. タグ発火の `Release` workflow が deb/NSIS を再ビルドして GitHub Release 公開 (§6方式で完了まで監視)
 - PR時とタグ時の二重ビルドは意図的 (公開物がタグcommit由来である保証のため。簡略化しない方針)
 - 公開物には `resources/licenses/` (GPL-2.0条文+注意文+CI生成BUILD.txt) の同梱必須 (`tauri.conf.json` resources と CI 生成を確認)
-- 公開確認: `gh release view preview.04 --json assets --jq '.assets[].name'`
+- リリース文は1つ前の `preview.*` との比較を必須とする。`release.yml` が `PREV...TAG` の差分から自動生成する:
+  `✨ 追加 Added` (`feat:`)、`🔧 改善 Improved` (それ以外)、`🐛 修正 Fixed` (`fix:`) + `Full Changelog` 比較リンク。各節が空なら `- なし`。手動で直す場合は同形式を維持 (`gh release edit <tag> --notes-file <file>`)
+- 公開確認: `gh release view preview.04 --json assets --jq '.assets[].name'` と本文確認: `gh release view preview.04 --json body --jq .body`

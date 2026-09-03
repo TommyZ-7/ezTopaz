@@ -15,7 +15,43 @@ description: Ship an ezTopaz preview release (version bump, PR gate, tag, GitHub
    `git tag preview.XX && git push origin preview.XX`
 4. The tag-triggered `Release` workflow rebuilds deb/NSIS and publishes the
    GitHub Release. Monitor to completion (see `ci-watch` skill).
-5. Verify: `gh release view preview.XX --json assets --jq '.assets[].name'`
+5. Verify assets and notes:
+   `gh release view preview.XX --json assets --jq '.assets[].name'`
+   `gh release view preview.XX --json body --jq .body`
+
+## Release notes (must compare with the previous version)
+
+- The workflow auto-generates the notes from `PREV...TAG`
+  (`PREV` = one previous `preview.*` tag, full history via
+  `checkout fetch-depth: 0`). Do not revert to a fixed template.
+- Required sections:
+  `### ✨ 追加 Added` (`feat:` commits),
+  `### 🔧 改善 Improved` (all non-merge commits except `feat:`/`fix:`),
+  `### 🐛 修正 Fixed` (`fix:` commits),
+  plus a `Full Changelog: .../compare/PREV...TAG` link. Empty sections
+  render as `- なし`.
+- Template (first release omits the `(PREV からの変更)` suffix):
+
+```md
+## ezTopaz preview.XX (preview.YY からの変更)
+
+### ✨ 追加 Added
+- feat: ... (abc1234)
+
+### 🔧 改善 Improved
+- ... (def5678)
+
+### 🐛 修正 Fixed
+- fix: ... (789abcd)
+
+---
+**Full Changelog**: https://github.com/<owner>/<repo>/compare/preview.YY...preview.XX
+
+MVP preview build. FFmpeg (BtbN GPL build) is bundled — ...
+```
+
+- Manual fix (e.g. wording polish) keeps the same format:
+  `gh release edit preview.XX --notes-file /tmp/release-notes.md`
 
 ## Rules
 

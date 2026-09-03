@@ -43,6 +43,10 @@ jobs:
       contents: write # タグ push 時に GitHub Release を作成/更新するため
     steps:
       - uses: actions/checkout@v4
+        with:
+          # リリース文の前バージョン比較 (PREV...TAG の git log) に全履歴+タグが必要
+          fetch-depth: 0
+          fetch-tags: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
@@ -93,10 +97,45 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
-          NOTES="MVP preview build. FFmpeg (BtbN GPL build) is bundled — the GPL notice must ship with the artifacts (design §11). Windows: NSIS installer. Linux: deb (AppImage is planned for a later release)."
+          git fetch --tags --force
+          # 1つ前の preview.* タグを特定し、差分をリリース文にする
+          PREV=$(git tag --list 'preview.*' --sort=-v:refname | grep -vxF "$TAG" | head -n1)
+          if [ -n "$PREV" ]; then
+            RANGE="$PREV..$TAG"
+            TITLE_SUFFIX=" ($PREV からの変更)"
+            COMPARE="**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
+          else
+            RANGE="$TAG"
+            TITLE_SUFFIX=""
+            COMPARE="_First preview release._"
+          fi
+          pick() { git log "$RANGE" --no-merges --pretty=format:'- %s (%h)' "$@" || true; }
+          ADDED=$(pick --grep='^feat' -i)
+          FIXED=$(pick --grep='^fix' -i)
+          IMPROVED=$(pick --invert-grep --grep='^feat' --grep='^fix' -i)
+          [ -n "$ADDED" ] || ADDED="- なし"
+          [ -n "$FIXED" ] || FIXED="- なし"
+          [ -n "$IMPROVED" ] || IMPROVED="- なし"
+          cat > /tmp/release-notes.md <<EOF
+          ## ezTopaz $TAG$TITLE_SUFFIX
+
+          ### ✨ 追加 Added
+          $ADDED
+
+          ### 🔧 改善 Improved
+          $IMPROVED
+
+          ### 🐛 修正 Fixed
+          $FIXED
+
+          ---
+          $COMPARE
+
+          MVP preview build. FFmpeg (BtbN GPL build) is bundled — the GPL notice must ship with the artifacts (design §11). Windows: NSIS installer. Linux: deb (AppImage is planned for a later release).
+          EOF
           # matrix の2ジョブが同じ Release へ追記するため冪等に
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "ezTopaz $TAG" --notes "$NOTES"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "ezTopaz $TAG" --notes-file /tmp/release-notes.md
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             $(find target/release/bundle -type f \( -name '*.deb' -o -name '*.exe' \))
       - uses: actions/upload-artifact@v4

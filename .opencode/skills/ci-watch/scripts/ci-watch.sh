@@ -3,8 +3,12 @@
 # run dynamically (a new push supersedes the old run as `cancelled`).
 # Usage: ci-watch.sh <branch> [workflow]   (workflow default: CI)
 set -u
-BRANCH="${1:?usage: ci-watch.sh <branch> [workflow]}"
-WF="${2:-CI}"
+# $1/$2 が空でも env BRANCH/WF にフォールバックする。
+# `BRANCH=x nohup ci-watch.sh "$BRANCH"` の一行書きでは "$BRANCH" の展開時点で
+# 空になるが env としては伝わるため、このフォールバックで誤起動を防ぐ。
+BRANCH="${1:-${BRANCH:-}}"
+WF="${2:-${WF:-CI}}"
+[ -n "$BRANCH" ] || { echo "usage: ci-watch.sh <branch> [workflow]" >&2; exit 2; }
 TRACK=""
 resolve() { gh run list --branch "$BRANCH" --workflow "$WF" --limit 5 --json databaseId,status,conclusion --jq '[.[] | select(.conclusion != "cancelled")] | ((map(select(.status=="in_progress" or .status=="queued" or .status=="waiting" or .status=="requested")) | sort_by(.databaseId) | last) // (sort_by(.databaseId) | last)) | .databaseId // empty'; }
 for i in $(seq 1 90); do

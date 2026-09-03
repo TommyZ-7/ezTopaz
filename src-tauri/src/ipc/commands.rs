@@ -35,8 +35,12 @@ pub struct AppState {
     pub preview: Mutex<Option<crate::capture::ScreenCapture>>,
     #[cfg(not(any(feature = "capture-linux", feature = "capture-windows")))]
     pub preview: Mutex<Option<()>>,
-    #[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
-    pub screen: Mutex<Option<crate::capture::ScreenCapture>>,
+    /// Live video leg: plain WGC capture on Linux, `ScreenHandle`
+    /// (WGC or ddagrab-direct) on Windows.
+    #[cfg(feature = "capture-windows")]
+    pub screen: Mutex<Option<crate::capture::windows::ScreenHandle>>,
+    #[cfg(feature = "capture-linux")]
+    pub screen: Mutex<Option<crate::capture::linux::ScreenCapture>>,
     #[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
     pub audio_cap: Mutex<Option<crate::capture::AudioCapture>>,
     #[cfg(not(any(feature = "capture-linux", feature = "capture-windows")))]
@@ -230,24 +234,45 @@ fn launch_pipeline(
     pipes::create(&sess.plan.audio_pipe).map_err(err)?;
 
     let ffmpeg = ffmpeg_path();
+
+    // C10: ddagrab direct video input (Windows fullscreen only). The video
+    // pipe/sink/capture are bypassed; audio still flows through its pipe.
+    #[cfg(feature = "capture-windows")]
+    let direct = eztopaz_core::ffmpeg::hw::parse_direct_input(sess.cfg.direct_input.as_deref());
+
+    #[cfg(feature = "capture-windows")]
+    let proc = match &direct {
+        Some(_) => {
+            let argv = eztopaz_core::ffmpeg::hw::build_direct_args(
+                &sess.profile,
+                &sess.plan.encoder,
+                &sess.cfg,
+                &sess.plan.audio_pipe,
+            )
+            .map_err(err)?;
+            StreamProcess::spawn(&ffmpeg, &argv).map_err(err)?
+        }
+        None => StreamProcess::spawn(&ffmpeg, &sess.plan.ffmpeg_args).map_err(err)?,
+    };
+    #[cfg(feature = "capture-linux")]
     let proc = StreamProcess::spawn(&ffmpeg, &sess.plan.ffmpeg_args).map_err(err)?;
 
     // blocks until ffmpeg opens/connected each pipe (design §4.1)
-    let video_writer = pipes::open_writer(&sess.plan.video_pipe).map_err(err)?;
     let audio_writer = pipes::open_writer(&sess.plan.audio_pipe).map_err(err)?;
-    // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
-    let vsink = VideoSink::spawn_for_transport(
-        video_writer,
-        sess.profile.w,
-        sess.profile.h,
-        sess.profile.fps,
-        sess.plan.transport,
-    )
-    .map_err(err)?;
     let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
 
     #[cfg(feature = "capture-linux")]
     {
+        let video_writer = pipes::open_writer(&sess.plan.video_pipe).map_err(err)?;
+        // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
+        let vsink = VideoSink::spawn_for_transport(
+            video_writer,
+            sess.profile.w,
+            sess.profile.h,
+            sess.profile.fps,
+            sess.plan.transport,
+        )
+        .map_err(err)?;
         let screen =
             crate::capture::linux::start_screen(app.clone(), &sess.profile, vsink).map_err(err)?;
         let audio_cap = crate::capture::linux::start_audio(&sess.cfg.audio, asink).map_err(err)?;
@@ -256,17 +281,36 @@ fn launch_pipeline(
     }
     #[cfg(feature = "capture-windows")]
     {
-        let screen = crate::capture::windows::start_screen(
-            app.clone(),
-            &sess.cfg.screen,
-            &sess.profile,
-            vsink,
-            false,
-        )
-        .map_err(err)?;
-        let audio_cap = crate::capture::windows::start_audio(&sess.cfg.audio, asink).map_err(err)?;
-        *state.screen.lock().unwrap() = Some(screen);
-        *state.audio_cap.lock().unwrap() = Some(audio_cap);
+        use crate::capture::windows::ScreenHandle;
+        if direct.is_some() {
+            let audio_cap =
+                crate::capture::windows::start_audio(&sess.cfg.audio, asink).map_err(err)?;
+            *state.screen.lock().unwrap() = Some(ScreenHandle::Direct);
+            *state.audio_cap.lock().unwrap() = Some(audio_cap);
+        } else {
+            let video_writer = pipes::open_writer(&sess.plan.video_pipe).map_err(err)?;
+            // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
+            let vsink = VideoSink::spawn_for_transport(
+                video_writer,
+                sess.profile.w,
+                sess.profile.h,
+                sess.profile.fps,
+                sess.plan.transport,
+            )
+            .map_err(err)?;
+            let screen = crate::capture::windows::start_screen(
+                app.clone(),
+                &sess.cfg.screen,
+                &sess.profile,
+                vsink,
+                false,
+            )
+            .map_err(err)?;
+            let audio_cap =
+                crate::capture::windows::start_audio(&sess.cfg.audio, asink).map_err(err)?;
+            *state.screen.lock().unwrap() = Some(ScreenHandle::Wgc(screen));
+            *state.audio_cap.lock().unwrap() = Some(audio_cap);
+        }
     }
 
     let mut proc = proc;
@@ -326,6 +370,12 @@ pub fn start_stream(
 
     #[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
     {
+        // ddagrab direct input exists only on Windows; fail loudly instead
+        // of silently falling back to the pipe path.
+        #[cfg(feature = "capture-linux")]
+        if cfg.direct_input.is_some() {
+            return Err("direct input (ddagrab) is Windows-only".into());
+        }
         // initial mixer state from the UI selection
         let mixer = Arc::new(Mutex::new(eztopaz_core::audio::Mixer {
             apps: cfg

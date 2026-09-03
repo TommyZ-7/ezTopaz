@@ -46,7 +46,7 @@ gh pr checks <pr-number>
 - run ID を起動時に固定しない。new push で run が再生成されると旧 run (cancelled) を見て誤終了するため、毎回最新 run を再解決する。
 ```bash
 # BRANCH / WF (CI or Release) を指定。最新runを動的追跡し完了まで監視
-BRANCH=<branch>; WF=CI; TRACK=""
+BRANCH="<branch>"; WF=CI; TRACK=""
 resolve() { gh run list --branch "$BRANCH" --workflow "$WF" --limit 5 --json databaseId,status,conclusion --jq '[.[] | select(.conclusion != "cancelled")] | ((map(select(.status=="in_progress" or .status=="queued" or .status=="waiting" or .status=="requested")) | sort_by(.databaseId) | last) // (sort_by(.databaseId) | last)) | .databaseId // empty'; }
 for i in $(seq 1 90); do
   id=$(resolve)

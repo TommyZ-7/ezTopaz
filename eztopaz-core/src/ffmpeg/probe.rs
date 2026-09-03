@@ -73,6 +73,84 @@ pub fn test_encode_args(encoder: &str) -> Vec<String> {
     ]
 }
 
+/// `encoders.json` next to `profiles.json`: avoids re-running the 1-frame
+/// functional tests on every launch. Keyed by ffmpeg binary identity
+/// (path + mtime + size) plus the `ffmpeg -version` first line, so driver
+/// or binary updates invalidate the cache.
+pub fn encoder_cache_path() -> std::path::PathBuf {
+    crate::config::config_dir().join("encoders.json")
+}
+
+/// (mtime_secs, size_bytes) for cache invalidation; (0, 0) when unknown
+/// (e.g. `ffmpeg` resolved via PATH).
+pub fn ffmpeg_file_id(ffmpeg: &std::path::Path) -> (u64, u64) {
+    let meta = std::fs::metadata(ffmpeg);
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let mtime = meta
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    (mtime, size)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+struct EncoderCacheFile {
+    ffmpeg: String,
+    version: String,
+    mtime: u64,
+    size: u64,
+    encoders: Vec<crate::ipc_types::EncoderInfo>,
+}
+
+/// Load a previous probe result when the ffmpeg identity still matches.
+/// Returns `None` on any mismatch or I/O/parse failure (caller re-probes).
+pub fn load_cached_encoders(
+    cache: &std::path::Path,
+    ffmpeg: &std::path::Path,
+    version: &str,
+) -> Option<Vec<crate::ipc_types::EncoderInfo>> {
+    let raw = std::fs::read_to_string(cache).ok()?;
+    let cached: EncoderCacheFile = serde_json::from_str(&raw).ok()?;
+    if cached.ffmpeg != ffmpeg.to_string_lossy() || cached.version != version {
+        return None;
+    }
+    let (mtime, size) = ffmpeg_file_id(ffmpeg);
+    if cached.mtime != mtime || cached.size != size {
+        return None;
+    }
+    Some(cached.encoders)
+}
+
+/// Best-effort cache store; failures are ignored by the caller.
+pub fn save_cached_encoders(
+    cache: &std::path::Path,
+    ffmpeg: &std::path::Path,
+    version: &str,
+    encoders: &[crate::ipc_types::EncoderInfo],
+) -> bool {
+    if let Some(parent) = cache.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    let (mtime, size) = ffmpeg_file_id(ffmpeg);
+    let file = EncoderCacheFile {
+        ffmpeg: ffmpeg.to_string_lossy().into_owned(),
+        version: version.to_string(),
+        mtime,
+        size,
+        encoders: encoders.to_vec(),
+    };
+    let Ok(json) = serde_json::to_string(&file) else { return false };
+    let tmp = cache.with_extension("json.tmp");
+    if std::fs::write(&tmp, json).is_err() {
+        return false;
+    }
+    std::fs::rename(&tmp, cache).is_ok()
+}
+
 /// Auto-selection over a list of *functionally verified* encoders.
 /// Platform-pure so it can be unit-tested for both OSes.
 pub fn probe_best_in(usable: &[String], is_windows: bool, is_linux: bool) -> &'static str {
@@ -161,5 +239,56 @@ Text encoders:
         let args = test_encode_args("h264_nvenc");
         assert_eq!(args[2], "-i");
         assert!(args.iter().any(|a| a == "h264_nvenc"));
+    }
+
+    fn cache_test_encoders() -> Vec<crate::ipc_types::EncoderInfo> {
+        vec![crate::ipc_types::EncoderInfo {
+            name: "h264_nvenc".into(),
+            usable: true,
+            reason: None,
+        }]
+    }
+
+    #[test]
+    fn encoder_cache_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("eztopaz-enc-cache-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_ffmpeg = dir.join("ffmpeg");
+        std::fs::write(&fake_ffmpeg, b"fake").unwrap();
+        let cache = dir.join("encoders.json");
+        let encoders = cache_test_encoders();
+
+        assert!(save_cached_encoders(&cache, &fake_ffmpeg, "ffmpeg version 8.0", &encoders));
+        assert_eq!(
+            load_cached_encoders(&cache, &fake_ffmpeg, "ffmpeg version 8.0"),
+            Some(encoders)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn encoder_cache_rejects_stale_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("eztopaz-enc-stale-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_ffmpeg = dir.join("ffmpeg");
+        std::fs::write(&fake_ffmpeg, b"fake").unwrap();
+        let cache = dir.join("encoders.json");
+
+        assert!(save_cached_encoders(&cache, &fake_ffmpeg, "ffmpeg version 8.0", &cache_test_encoders()));
+        // version bump invalidates
+        assert_eq!(load_cached_encoders(&cache, &fake_ffmpeg, "ffmpeg version 9.0"), None);
+        // binary change invalidates
+        std::fs::write(&fake_ffmpeg, b"fake-new-binary").unwrap();
+        assert_eq!(
+            load_cached_encoders(&cache, &fake_ffmpeg, "ffmpeg version 8.0"),
+            None
+        );
+        // corrupt file falls back to re-probe
+        std::fs::write(&cache, "{ not json").unwrap();
+        assert_eq!(load_cached_encoders(&cache, &fake_ffmpeg, "ffmpeg version 8.0"), None);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

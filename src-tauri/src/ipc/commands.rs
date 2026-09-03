@@ -151,6 +151,12 @@ pub fn save_profiles(cfg: ProfilesConfig) -> CmdResult<()> {
 // ---------- encoders ----------
 
 /// `ffmpeg -encoders` parse + 1-frame functional test per candidate (design §8.1).
+///
+/// Second and later launches hit the `encoders.json` cache (keyed by ffmpeg
+/// identity + `-version`), so startup costs a single fast `-version` spawn
+/// instead of up to 4 slow GPU-init test encodes. The functional tests run
+/// in parallel via `thread::scope`, bounding a cold start by one timeout
+/// instead of the sum.
 #[tauri::command]
 pub fn probe_encoders() -> CmdResult<Vec<EncoderInfo>> {
     let ffmpeg = ffmpeg_path();
@@ -161,55 +167,98 @@ pub fn probe_encoders() -> CmdResult<Vec<EncoderInfo>> {
             reason: Some("ffmpeg binary not found".into()),
         }]);
     }
-    let output = std::process::Command::new(&ffmpeg)
+    let version = ffmpeg_version(&ffmpeg);
+    let cache_path = probe::encoder_cache_path();
+    if let Some(cached) = probe::load_cached_encoders(&cache_path, &ffmpeg, &version) {
+        return Ok(cached);
+    }
+    let output = ffmpeg_cmd(&ffmpeg)
         .arg("-encoders")
         .output()
         .map_err(|e| format!("ffmpeg -encoders failed: {e}"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     let listed = probe::parse_encoders(&text);
 
-    let mut result = Vec::new();
-    for name in probe::AUTO_CANDIDATES {
-        if !listed.iter().any(|e| e == name) {
-            continue;
-        }
-        let usable = test_encode_1frame(&ffmpeg, name);
-        result.push(EncoderInfo {
-            name: name.to_string(),
+    let candidates: Vec<&str> = probe::AUTO_CANDIDATES
+        .iter()
+        .copied()
+        .filter(|name| listed.iter().any(|e| e == name))
+        .collect();
+    // Parallel functional tests; cold start costs max(1 test), not the sum.
+    let mut checked: Vec<(usize, bool)> = std::thread::scope(|s| {
+        candidates
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let ffmpeg = ffmpeg.clone();
+                s.spawn(move || (i, test_encode_1frame(&ffmpeg, name)))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap_or((0, false)))
+            .collect()
+    });
+    checked.sort_by_key(|(i, _)| *i);
+    let mut result: Vec<EncoderInfo> = checked
+        .into_iter()
+        .map(|(i, usable)| EncoderInfo {
+            name: candidates[i].to_string(),
             usable,
             reason: (!usable).then(|| "1-frame encode test failed (driver missing?)".into()),
-        });
-    }
+        })
+        .collect();
     result.push(EncoderInfo { name: "libx264".into(), usable: true, reason: None });
+    let _ = probe::save_cached_encoders(&cache_path, &ffmpeg, &version, &result);
     Ok(result)
+}
+
+/// Hidden ffmpeg spawn: no console window flashes on Windows (B-1).
+fn ffmpeg_cmd(ffmpeg: &std::path::Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(ffmpeg);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
+/// First line of `ffmpeg -version` for cache invalidation; "" when unknown
+/// (falls through to a fresh probe instead of trusting a stale cache).
+fn ffmpeg_version(ffmpeg: &std::path::Path) -> String {
+    ffmpeg_cmd(ffmpeg)
+        .arg("-version")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.lines().next().map(|l| l.trim().to_string()))
+        .unwrap_or_default()
 }
 
 fn test_encode_1frame(ffmpeg: &std::path::Path, encoder: &str) -> bool {
     let args = probe::test_encode_args(encoder);
-    let mut cmd = std::process::Command::new(ffmpeg);
+    let mut cmd = ffmpeg_cmd(ffmpeg);
     cmd.args(&args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     run_with_timeout(cmd, Duration::from_secs(5)).unwrap_or(false)
 }
 
 fn run_with_timeout(mut cmd: std::process::Command, timeout: Duration) -> Option<bool> {
-    use std::sync::mpsc;
-    let (tx, rx) = mpsc::channel();
-    let child = cmd.spawn().ok()?;
-    #[cfg(unix)]
-    let pid = child.id();
-    std::thread::spawn(move || {
-        let mut child = child;
-        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
-        let _ = tx.send(ok);
-    });
-    match rx.recv_timeout(timeout) {
-        Ok(ok) => Some(ok),
-        Err(_) => {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
+    let mut child = cmd.spawn().ok()?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status.success()),
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    // Covers Windows too (the old mpsc version only killed on unix,
+                    // leaking hung ffmpeg test processes + their consoles).
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
             }
-            None
+            Err(_) => return None,
         }
     }
 }

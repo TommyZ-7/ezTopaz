@@ -6,7 +6,8 @@
     "save": "保存",
     "saved": "保存しました",
     "logs": "ログを開く",
-    "licenses": "ライセンス (MIT / FFmpeg GPL)"
+    "licenses": "ライセンス (MIT / FFmpeg GPL)",
+    "loading": "起動中…"
   },
   "screen": {
     "tab": "画面",
@@ -31,6 +32,7 @@
     "p1080": "1080p",
     "encoder": "エンコーダ",
     "auto": "自動",
+    "checkingEncoders": "エンコーダを確認中…",
     "warn1080p": "Topaz上限2000kのため画質が粗くなります。720p推奨",
     "overBitrate": "Topaz上限を超えています (映像≤2000k / 音声≤320k)"
   },

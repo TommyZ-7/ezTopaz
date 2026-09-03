@@ -92,7 +92,14 @@ pub struct StreamProcess {
 impl StreamProcess {
     /// Spawn ffmpeg. `args` comes from args::build_ffmpeg_args.
     pub fn spawn(ffmpeg: &Path, args: &[String]) -> Result<Self> {
-        let mut child = Command::new(ffmpeg)
+        let mut cmd = Command::new(ffmpeg);
+        // No console window flash on Windows (startup probe + stream spawns).
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = cmd
             .args(args)
             .stdout(Stdio::piped()) // -progress pipe:1
             .stderr(Stdio::piped())

@@ -22,11 +22,15 @@ export default function App() {
   const tab = useStore((s) => s.tab);
   const setTab = useStore((s) => s.setTab);
   const toast = useStore((s) => s.toast);
-  const loadAll = useStore((s) => s.loadAll);
+  const booted = useStore((s) => s.booted);
+  const loadBase = useStore((s) => s.loadBase);
+  const loadEncoders = useStore((s) => s.loadEncoders);
   const refreshStatus = useStore((s) => s.refreshStatus);
 
   useEffect(() => {
-    void loadAll();
+    // F-1: base data first (splash dismiss), encoder probe in background.
+    void loadBase();
+    void loadEncoders();
     const timer = setInterval(() => void refreshStatus(), 1000);
     const vuTimer = setInterval(() => void useStore.getState().refreshVu(), 100);
     // F-SC-03: live preview frames from the capture backend (1fps)
@@ -60,7 +64,19 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-zinc-900 text-zinc-100">
-      <Header onOpenSettings={() => setSettingsOpen(true)} />
+      {!booted ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4">
+          <h1 className="text-xl font-semibold">{t("app.title")}</h1>
+          <div
+            className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-sky-500"
+            role="status"
+            aria-label={t("app.loading")}
+          />
+          <p className="text-sm text-zinc-400">{t("app.loading")}</p>
+        </div>
+      ) : (
+        <>
+          <Header onOpenSettings={() => setSettingsOpen(true)} />
 
       <nav className="flex gap-1 border-b border-zinc-800 px-4">
         {TABS.map(({ id, key }) => (
@@ -87,6 +103,8 @@ export default function App() {
       <div className="border-t border-zinc-700 p-4">
         <StreamControl />
       </div>
+        </>
+      )}
 
       {toast && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 rounded bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 shadow-lg">

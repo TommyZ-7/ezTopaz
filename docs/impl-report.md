@@ -24,7 +24,7 @@
 | **配信前プレビュー** (F-SC-03/§6.4) | ✅ | `start_preview`/`stop_preview`。キャプチャのみ (ffmpeg/パイプ無し) で 640x360@1fps PNG を `stream://preview` へ。UI にボタン + ja/en |
 | **FFmpeg 同梱リリースビルド** (§13.2/§4.4) | ✅ | pinned BtbN GPL ビルドを `resources/ffmpeg/` へ配置し NSIS/deb を生成。`ffmpeg_path()` が同梱バイナリを解決 |
 | **start_stream の実バグ修正** | ✅ | StreamProcess を state に保存していず get_status が必ずパニックする問題 (v0.1 時点) を修正 |
-| AppImage | ⏸ 保留 | linuxdeploy が同梱 ffmpeg に patchelf rpath 設定失敗。復活手順は ci.yml コメント参照 (linuxdeploy ラッパー --exclude-files + librsvg2-dev) |
+| AppImage | ✅ 復活 (#29) | ffmpeg抜きでビルド → `packaging/appimage/inject-ffmpeg.sh` で後注入 (extract + appimagetool再パック)。`usr/bin/ffmpeg` にも配置して `ffmpeg_path()` 解決に対応 |
 
 ## 3. 検証状態
 
@@ -54,16 +54,17 @@
 - 同梱 ffmpeg: **pinned BtbN GPL ビルド** `autobuild-2026-09-02-13-13` (FFmpeg n8.1.2)
   - 更新手順: ci.yml の `FFMPEG_TAG`/`FFMPEG_DIR` を更新
   - **GPL (libx264) のため配布物に GPL 表記が必須** (設計 §11)
-- AppImage は未提供 (§2 の保留参照)。Arch系への配布は `packaging/aur/` の `eztopaz-bin` (debリパック) + ソースビルド (手順は `docs/arch.md`)
+- 成果物: `ezTopaz_*_amd64.deb` + `ezTopaz_*_amd64.AppImage` (いずれもffmpeg同梱) / NSIS `.exe` (同梱)。Arch系はAppImageを第一経路に (`docs/arch.md`)
 
 ## 5. 残タスク (優先順)
 
 1. **実機 E2E** (Wayland + PipeWire 実機, 要件 AC-04/05/06/08):
    起動 → Portalピッカー → 配信開始 → `ffprobe rtspt://topaz.chat/live/<key>` で確認。
    ffmpeg は BtbN ビルドを `EZTOPAZ_FFMPEG` 指定が最短。問題発生時は `logs/ezTopaz-*.log` を確認。
-2. ~~AppImage 復活 (linuxdeploy ラッパー --exclude-files + librsvg2-dev) または AUR パッケージ~~ → AUR は `packaging/aur/eztopaz-bin` で対応済み (#27)。AppImage 復活は任意
+2. ~~AppImage 復活 / AUR パッケージ~~ → AUR は `packaging/aur/eztopaz-bin` (#27)、AppImage は後注入方式で復活済み (#29)。残りは実機E2Eのみ
 3. F-AU-04: アプリ別ゲインUI (AudioSelector にスライダー/ミュート → `update_audio_mix`。バックエンドは実装済み)
 4. 小口: `probe_encoders()` 結果キャッシュ (start_stream が全候補OKと仮定している `ponytail:` 箇所) / ログローテート / F-CF-03 export/import
+5. `ffmpeg_path()` のLinux解決: exe隣しか見ないため deb の `usr/lib/<app>/resources/ffmpeg` が未使用 (PATHにフォールバック)。AppImageは `usr/bin/ffmpeg` 注入で回避済み (#29)。根本修正 (resources配置の解決) は別途
 
 ## 6. ファイルマップ (v0.2)
 
@@ -86,7 +87,7 @@ src-tauri/resources/ffmpeg/ 同梱 ffmpeg 配置先 (CI が pinned ビルドを�
 ## 7. デビエーション (設計からの決定事項)
 
 - v0.1 からの分に加えて:
-  - **AppImage 保留 / Linux は deb のみ**: patchelf が同梱 ffmpeg に失敗するため (§4)。設計 §13.2 からの逸脱、復活手順は ci.yml 参照
+  - **AppImage は後注入方式で復活** (#29): linuxdeploy工程はffmpeg抜きで通し、完成後に extract + appimagetool再パックで追加。設計 §13.2 通りの配布に戻ったため逸脱は解消
   - **再接続時はパイプ+キャプチャごと再spawn** (impl-report v0.1 の「パイプは既存」から設計 §4.1 準拠に変更)。Windows パイプはインスタンスが1クライアントで消費されるため必須
   - **linux start_screen は Portal fd を消費しない**: preview → stream を再ピッカー無しで遷移させるため内部で dup
   - **プレビュー配信はキャプチャバックエンド自身が行う** (windows は既存実装、linux は preview スレッド追加)。RT スレッドを避けるため変換は別スレッド

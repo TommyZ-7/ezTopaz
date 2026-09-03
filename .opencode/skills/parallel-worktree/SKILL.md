@@ -11,7 +11,12 @@ description: Work on another branch in a separate session without disturbing the
 2. Open the new session in the new worktree directory.
 3. Keep a 1:1 session-to-branch mapping. Never check out the same branch in
    two worktrees (git forbids it) and never switch branches in a worktree
-   owned by another session.
+   owned by another session. Branch create/switch shell commands are denied
+   by project `opencode.json` permissions (except switching to `main` and
+   path restore) — create branches only via `git worktree add -b`.
+   Note: shell permission matching is whole-command text, so compound
+   commands smuggling a checkout (e.g. via `&&`) fall back to ask — stay in
+   the worktree flow regardless.
 4. Clean up after merge: `git worktree remove ../ezTopaz-<suffix>`,
    then `git worktree prune`. Verify with `git worktree list`.
 

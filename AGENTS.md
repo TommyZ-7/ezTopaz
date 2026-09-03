@@ -6,7 +6,9 @@
 - `main` は常時リリース可能に保つ。壊れた状態でマージしない。
 - リリースは `preview.*` タグ push のみ。例: `git tag preview.04 && git push origin preview.04`
 - AI はユーザーの明示的な指示なしにリリース関連操作 (タグ作成/push、Release 手動実行、`gh release` 公開) を行わない
-- 並行作業時は `git worktree` を使う (同一workdirでのbranch切替禁止)。詳細は `parallel-worktree` skill
+- 同一workdirでのbranch作成・切替 (`checkout -b`/`switch`等) は禁止。新規作業は必ず `git worktree` から始める (`opencode.json` の権限設定で強制):
+  `git worktree add ../ezTopaz-<name> -b <branch>` → 別セッションは新worktreeで開く → 用済みは `remove`+`prune`
+- 許可操作: `main`への切替、パス指定の復元 (`checkout -- <path>`)、`worktree`。詳細は `parallel-worktree` skill
 - マージ完了後は `main` に切替・pullする。作業branchに留まらない
 - マージ済み作業branchは local + remote を削除する (`git branch -d` + `git push origin --delete`)
 - 新規branchは必ず更新済み `main` から切る (事前に `checkout main && pull` と `status` clean確認)

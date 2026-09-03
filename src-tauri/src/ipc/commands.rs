@@ -263,6 +263,33 @@ fn run_with_timeout(mut cmd: std::process::Command, timeout: Duration) -> Option
     }
 }
 
+/// Kill a pipeline ffmpeg that failed mid-launch and report its stderr tail
+/// with the context. A bare pipe-timeout hides the real cause (e.g. an
+/// unusable HW encoder dying at init); the tail shows it.
+#[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
+fn pipeline_error(proc: &mut StreamProcess, ctx: impl std::fmt::Display) -> String {
+    // grace period for the stderr-drain thread to flush pending lines —
+    // without it the tail below (and the log file) is often empty.
+    std::thread::sleep(Duration::from_millis(300));
+    let tail = proc.tail_stderr(20);
+    proc.stop();
+    if tail.is_empty() {
+        ctx.to_string()
+    } else {
+        format!("{ctx}; ffmpeg stderr:\n{}", tail.join("\n"))
+    }
+}
+
+/// Fail fast when ffmpeg already exited (bad argv, missing encoder, ...):
+/// report its stderr instead of waiting out the pipe timeout.
+#[cfg(any(feature = "capture-linux", feature = "capture-windows"))]
+fn check_ffmpeg_alive(proc: &mut StreamProcess) -> Result<(), String> {
+    if proc.try_wait().is_some() {
+        return Err(pipeline_error(proc, "ffmpeg exited before opening pipes"));
+    }
+    Ok(())
+}
+
 // ---------- stream lifecycle ----------
 
 /// Spawn ffmpeg and wire the capture backends to it (design §4.1). Used by
@@ -306,22 +333,18 @@ fn launch_pipeline(
     #[cfg(feature = "capture-linux")]
     let mut proc = StreamProcess::spawn(&ffmpeg, &sess.plan.ffmpeg_args).map_err(err)?;
 
-    // Pipe open order: ffmpeg opens the video input first, so both writers
-    // connect concurrently — a sequential audio-first open deadlocks (each
-    // side waits for the other) and freezes the sync start_stream command.
-    // Timeout/error kills the spawned ffmpeg and returns a clear error.
+    // Pipe open order: ffmpeg opens the video input first and reads probe
+    // data before it opens the audio input, so the video leg must be
+    // connected AND feeding before the audio writer can connect. Waiting
+    // for both writers up front deadlocks (no sink exists yet to feed
+    // video) and ends in PIPE_OPEN_TIMEOUT + kill. Timeout/error kills the
+    // spawned ffmpeg and returns its stderr tail with the context.
     #[cfg(feature = "capture-linux")]
     {
-        let (video_writer, audio_writer) = pipes::open_writers_concurrently(
-            &sess.plan.video_pipe,
-            &sess.plan.audio_pipe,
-            pipes::PIPE_OPEN_TIMEOUT,
-        )
-        .map_err(|e| {
-            proc.stop();
-            err(e)
-        })?;
-        let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
+        check_ffmpeg_alive(&mut proc)?;
+        let video_writer =
+            pipes::open_writer_timeout(&sess.plan.video_pipe, pipes::PIPE_OPEN_TIMEOUT)
+                .map_err(|e| pipeline_error(&mut proc, err(e)))?;
         // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
         let vsink = VideoSink::spawn_for_transport(
             video_writer,
@@ -330,11 +353,31 @@ fn launch_pipeline(
             sess.profile.fps,
             sess.plan.transport,
         )
-        .map_err(err)?;
+        .map_err(|e| pipeline_error(&mut proc, err(e)))?;
         let screen =
-            crate::capture::linux::start_screen(app.clone(), &sess.profile, vsink).map_err(err)?;
-        let audio_cap = crate::capture::linux::start_audio(&sess.cfg.audio, asink).map_err(err)?;
+            crate::capture::linux::start_screen(app.clone(), &sess.profile, vsink)
+                .map_err(|e| pipeline_error(&mut proc, err(e)))?;
         *state.screen.lock().unwrap() = Some(screen);
+        // video data now flows; ffmpeg proceeds to the audio input.
+        if let Err(e) = check_ffmpeg_alive(&mut proc) {
+            stop_capture_backends(state);
+            return Err(e);
+        }
+        let audio_writer =
+            pipes::open_writer_timeout(&sess.plan.audio_pipe, pipes::PIPE_OPEN_TIMEOUT)
+                .map_err(|e| {
+                    stop_capture_backends(state);
+                    pipeline_error(&mut proc, err(e))
+                })?;
+        let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(|e| {
+            stop_capture_backends(state);
+            pipeline_error(&mut proc, err(e))
+        })?;
+        let audio_cap =
+            crate::capture::linux::start_audio(&sess.cfg.audio, asink).map_err(|e| {
+                stop_capture_backends(state);
+                pipeline_error(&mut proc, err(e))
+            })?;
         *state.audio_cap.lock().unwrap() = Some(audio_cap);
     }
     #[cfg(feature = "capture-windows")]
@@ -343,28 +386,23 @@ fn launch_pipeline(
         if direct.is_some() {
             // ddagrab: no video pipe; the single audio connect is still
             // bounded so a missing ffmpeg reader can't freeze start_stream.
+            check_ffmpeg_alive(&mut proc)?;
             let audio_writer =
                 pipes::open_writer_timeout(&sess.plan.audio_pipe, pipes::PIPE_OPEN_TIMEOUT)
-                    .map_err(|e| {
-                        proc.stop();
-                        err(e)
-                    })?;
-            let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
-            let audio_cap =
-                crate::capture::windows::start_audio(&sess.cfg.audio, asink).map_err(err)?;
+                    .map_err(|e| pipeline_error(&mut proc, err(e)))?;
+            let asink = AudioSink::spawn(audio_writer, sess.mixer.clone())
+                .map_err(|e| pipeline_error(&mut proc, err(e)))?;
+            let audio_cap = crate::capture::windows::start_audio(&sess.cfg.audio, asink)
+                .map_err(|e| pipeline_error(&mut proc, err(e)))?;
             *state.screen.lock().unwrap() = Some(ScreenHandle::Direct);
             *state.audio_cap.lock().unwrap() = Some(audio_cap);
         } else {
-            let (video_writer, audio_writer) = pipes::open_writers_concurrently(
-                &sess.plan.video_pipe,
-                &sess.plan.audio_pipe,
-                pipes::PIPE_OPEN_TIMEOUT,
-            )
-            .map_err(|e| {
-                proc.stop();
-                err(e)
-            })?;
-            let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
+            // Same video-first order as Linux: the video leg must feed
+            // before ffmpeg opens the audio input (see above).
+            check_ffmpeg_alive(&mut proc)?;
+            let video_writer =
+                pipes::open_writer_timeout(&sess.plan.video_pipe, pipes::PIPE_OPEN_TIMEOUT)
+                    .map_err(|e| pipeline_error(&mut proc, err(e)))?;
             // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
             let vsink = VideoSink::spawn_for_transport(
                 video_writer,
@@ -373,7 +411,7 @@ fn launch_pipeline(
                 sess.profile.fps,
                 sess.plan.transport,
             )
-            .map_err(err)?;
+            .map_err(|e| pipeline_error(&mut proc, err(e)))?;
             let screen = crate::capture::windows::start_screen(
                 app.clone(),
                 &sess.cfg.screen,
@@ -381,10 +419,27 @@ fn launch_pipeline(
                 vsink,
                 false,
             )
-            .map_err(err)?;
-            let audio_cap =
-                crate::capture::windows::start_audio(&sess.cfg.audio, asink).map_err(err)?;
+            .map_err(|e| pipeline_error(&mut proc, err(e)))?;
             *state.screen.lock().unwrap() = Some(ScreenHandle::Wgc(screen));
+            if let Err(e) = check_ffmpeg_alive(&mut proc) {
+                stop_capture_backends(state);
+                return Err(e);
+            }
+            let audio_writer =
+                pipes::open_writer_timeout(&sess.plan.audio_pipe, pipes::PIPE_OPEN_TIMEOUT)
+                    .map_err(|e| {
+                        stop_capture_backends(state);
+                        pipeline_error(&mut proc, err(e))
+                    })?;
+            let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(|e| {
+                stop_capture_backends(state);
+                pipeline_error(&mut proc, err(e))
+            })?;
+            let audio_cap = crate::capture::windows::start_audio(&sess.cfg.audio, asink)
+                .map_err(|e| {
+                    stop_capture_backends(state);
+                    pipeline_error(&mut proc, err(e))
+                })?;
             *state.audio_cap.lock().unwrap() = Some(audio_cap);
         }
     }
@@ -449,8 +504,19 @@ pub fn start_stream(
         .get(&cfg.profile_id)
         .cloned()
         .ok_or_else(|| format!("unknown profile: {}", cfg.profile_id))?;
-    let usable: Vec<String> = probe::AUTO_CANDIDATES.iter().map(|s| s.to_string()).collect();
-    // ponytail: assumes all compiled-in candidates work; cache probe_encoders() result instead
+    let usable: Vec<String> = if cfg.encoder_override == "auto" || cfg.encoder_override.is_empty() {
+        // Auto mode resolves against functionally verified encoders only.
+        // Assuming all compiled-in candidates work picks e.g. h264_nvenc on
+        // driverless machines, whose ffmpeg then dies before opening the
+        // pipes (timeout + kill). probe_encoders() is cache-backed, so this
+        // costs a single `-version` spawn on warm starts.
+        probe_encoders()
+            .map(|infos| infos.into_iter().filter(|i| i.usable).map(|i| i.name).collect())
+            .unwrap_or_default() // probe failed: probe_best falls back to libx264
+    } else {
+        // manual override is used as-is by build_plan; usability is the user's choice
+        Vec::new()
+    };
     let plan = prepare(&cfg, &profiles, &usable).map_err(err)?;
 
     #[cfg(not(any(feature = "capture-linux", feature = "capture-windows")))]

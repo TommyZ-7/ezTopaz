@@ -6,6 +6,7 @@
 - `main` は常時リリース可能に保つ。壊れた状態でマージしない。
 - リリースは `preview.*` タグ push のみ。例: `git tag preview.04 && git push origin preview.04`
 - AI はユーザーの明示的な指示なしにリリース関連操作 (タグ作成/push、Release 手動実行、`gh release` 公開) を行わない
+- 並行作業時は `git worktree` を使う (同一workdirでのbranch切替禁止)。詳細は `parallel-worktree` skill
 
 ## 2. CI 発火条件 (Actions 消費抑制のため分割)
 - `.github/workflows/ci.yml` (軽量: linux test + windows check + frontend)

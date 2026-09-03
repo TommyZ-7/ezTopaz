@@ -8,7 +8,7 @@ import { AudioSelector } from "./components/AudioSelector";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { StreamControl } from "./components/StreamControl";
 import { SettingsModal } from "./components/SettingsModal";
-import type { PreviewFrame } from "./lib/types";
+import type { PreviewFrame, StreamError } from "./lib/types";
 
 const TABS: { id: Tab; key: string }[] = [
   { id: "screen", key: "screen.tab" },
@@ -33,13 +33,27 @@ export default function App() {
     let unlisten: (() => void) | null = null;
     void listen<PreviewFrame>("stream://preview", (e) => {
       useStore.getState().setPreview(e.payload.dataUrl);
-    }).then((u) => {
-      unlisten = u;
-    });
+    })
+      .then((u) => {
+        unlisten = u;
+      })
+      .catch((e) => {
+        useStore.getState().showToast(String(e));
+      });
+    // backend failures (e.g. capture init) arrive here; without this they are silent
+    let unlistenError: (() => void) | null = null;
+    void listen<StreamError>("stream://error", (e) => {
+      useStore.getState().showToast(`${e.payload.code}: ${e.payload.msg}`);
+    })
+      .then((u) => {
+        unlistenError = u;
+      })
+      .catch(() => undefined);
     return () => {
       clearInterval(timer);
       clearInterval(vuTimer);
       unlisten?.();
+      unlistenError?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

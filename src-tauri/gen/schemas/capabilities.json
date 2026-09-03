@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Main window IPC access (event subscribe for preview frames and errors)","local":true,"windows":["main"],"permissions":["core:event:default"]}}

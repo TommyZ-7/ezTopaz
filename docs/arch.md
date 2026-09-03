@@ -61,6 +61,9 @@ xdg-desktop-portal バックエンドが必要:
 
 ## トラブルシュート
 
+- **`Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...`**:
+  preview.06 の AppImage で発生。ホストMesaと同梱wayland-clientの不整合が原因。
+  preview.07 以降 (修正 #32) の AppImageを使用する
 - **X11セッションで起動**: 非対応。Waylandセッションで起動し直す
   (`echo $XDG_SESSION_TYPE` で確認)
 - **画面共有ピッカーが出ない**: 上表のバックエンドがDEに合っているか確認

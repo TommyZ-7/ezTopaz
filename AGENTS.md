@@ -49,3 +49,17 @@ for i in $(seq 1 60); do s=$(gh run view <run-id> --json status,conclusion --jq 
 ```
 - 再開方法: `gh run list --branch <branch> --limit 5` で対象 run-id を特定し、上記コマンドをバックグラウンドで再実行する。
 - 完了後の既定動作: 成功→自動マージ (`gh pr merge <n> --merge` 後 `main` へ切替・pull)、失敗→ログ解析して修正を試み branch 更新。
+
+## 7. リリース手順 (preview.*)
+1. 版数 bump (`0.1.0-previewXX`。semver前置ゼロ不可のため `preview01` 形式):
+   - `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `eztopaz-core/Cargo.toml`, `Cargo.lock`
+   - `package.json` は `0.1.0` のまま変えない
+2. branch → PR → CI + Release(bundle) 緑 → `main` マージ (§1, §5準拠)
+3. 更新済み `main` にタグ付けして push:
+```bash
+git checkout main && git pull
+git tag preview.02 && git push origin preview.02
+```
+4. タグ発火の `Release` workflow が deb/NSIS を再ビルドして GitHub Release 公開 (§6方式で完了まで監視)
+- PR時とタグ時の二重ビルドは意図的 (公開物がタグcommit由来である保証のため。簡略化しない方針)
+- 公開確認: `gh release view preview.02 --json assets --jq '.assets[].name'`

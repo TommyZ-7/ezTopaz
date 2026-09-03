@@ -235,8 +235,15 @@ fn launch_pipeline(
     // blocks until ffmpeg opens/connected each pipe (design §4.1)
     let video_writer = pipes::open_writer(&sess.plan.video_pipe).map_err(err)?;
     let audio_writer = pipes::open_writer(&sess.plan.audio_pipe).map_err(err)?;
-    let vsink = VideoSink::spawn(video_writer, sess.profile.w, sess.profile.h, sess.profile.fps)
-        .map_err(err)?;
+    // Pipe format (BGRA/NV12) always matches ffmpeg argv via plan.transport.
+    let vsink = VideoSink::spawn_for_transport(
+        video_writer,
+        sess.profile.w,
+        sess.profile.h,
+        sess.profile.fps,
+        sess.plan.transport,
+    )
+    .map_err(err)?;
     let asink = AudioSink::spawn(audio_writer, sess.mixer.clone()).map_err(err)?;
 
     #[cfg(feature = "capture-linux")]

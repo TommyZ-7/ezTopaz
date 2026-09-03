@@ -5,8 +5,10 @@
 //! profile fps. It also owns resolution normalization: pushed frames must be
 //! exactly `w*h*4` bytes (BGRA) — capture backends scale before pushing.
 
+pub mod nv12;
 pub mod sink;
 
+pub use nv12::{bgra_to_nv12, bgra_to_nv12_into, nv12_frame_size, scale_bgra_to_nv12};
 pub use sink::{bgra_to_rgba, scale_bgra, scale_bgra_into, VideoSink};
 
 use crate::error::{Error, Result};
@@ -30,8 +32,17 @@ pub struct FramePacer {
 
 impl FramePacer {
     pub fn new(w: u32, h: u32, fps: u32) -> Self {
+        Self::new_with_frame_size((w as usize) * (h as usize) * 4, fps)
+    }
+
+    /// NV12 pacer (`w*h*3/2` bytes) for direct-NV12 push paths.
+    pub fn new_nv12(w: u32, h: u32, fps: u32) -> Self {
+        Self::new_with_frame_size(crate::video::nv12::nv12_frame_size(w, h), fps)
+    }
+
+    pub fn new_with_frame_size(frame_size: usize, fps: u32) -> Self {
         Self {
-            frame_size: (w as usize) * (h as usize) * 4,
+            frame_size,
             interval: Duration::from_secs_f64(1.0 / fps.max(1) as f64),
             last_frame: None,
             next_emit: None,

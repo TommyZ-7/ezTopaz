@@ -23,11 +23,34 @@ pub struct VideoSink {
 
 impl VideoSink {
     pub fn spawn(writer: File, w: u32, h: u32, fps: u32) -> Result<Self> {
+        Self::spawn_for_transport(
+            writer,
+            w,
+            h,
+            fps,
+            crate::ffmpeg::args::Transport::PipeBgra,
+        )
+    }
+
+    /// Transport-aware spawn. `PipeNv12` keeps the BGRA pacer (capture code
+    /// untouched) but converts to NV12 just before the pipe write, so the
+    /// pipe format always matches `build_ffmpeg_args_with_transport`.
+    pub fn spawn_for_transport(
+        writer: File,
+        w: u32,
+        h: u32,
+        fps: u32,
+        transport: crate::ffmpeg::args::Transport,
+    ) -> Result<Self> {
         let pacer = FramePacer::new(w, h, fps);
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let interval = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
+        let convert_nv12 =
+            matches!(transport, crate::ffmpeg::args::Transport::PipeNv12)
+                && w % 2 == 0
+                && h % 2 == 0;
 
         let handle = std::thread::Builder::new()
             .name("video-sink".into())
@@ -51,7 +74,12 @@ impl VideoSink {
                     }
                     let now = Instant::now();
                     while let Some(frame) = pacer.poll(now) {
-                        if writer.write_all(frame).is_err() {
+                        if convert_nv12 {
+                            let nv12 = super::nv12::bgra_to_nv12(frame, w, h);
+                            if writer.write_all(&nv12).is_err() {
+                                return; // reader (ffmpeg) gone
+                            }
+                        } else if writer.write_all(frame).is_err() {
                             return; // reader (ffmpeg) gone
                         }
                     }

@@ -111,6 +111,17 @@ pub fn output_pix_fmt(encoder: &str, transport: &Transport) -> &'static str {
     }
 }
 
+/// HW encoders get NV12 pipes (GPU-friendly, 3/8 bandwidth); software keeps
+/// BGRA (no conversion cost when no GPU upload is possible).
+pub fn transport_for_encoder(encoder: &str) -> Transport {
+    match encoder {
+        "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_vaapi" | "h264_vulkan" => {
+            Transport::PipeNv12
+        }
+        _ => Transport::PipeBgra,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_ffmpeg_args_with_transport(
     profile: &Profile,

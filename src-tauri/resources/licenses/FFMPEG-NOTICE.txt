@@ -1,0 +1,18 @@
+Bundled FFmpeg — license notice (design §11)
+
+This distribution of ezTopaz bundles a third-party FFmpeg executable
+(BtbN FFmpeg-Builds, *-gpl-* variant built with libx264).
+
+FFmpeg built with libx264 is licensed under the GNU General Public
+License version 2 (GPL-2.0). A verbatim copy of the license is included
+in this directory as GPL-2.0.txt.
+
+Source code for the exact bundled build (build tag, variant and download
+URLs) is recorded in FFMPEG-BUILD.txt in this directory, generated at
+bundle time. Upstream sources:
+- FFmpeg: https://github.com/FFmpeg/FFmpeg / https://ffmpeg.org/download.html
+- BtbN build scripts and release archives: https://github.com/BtbN/FFmpeg-Builds
+- x264: https://code.videolan.org/videolan/x264
+
+ezTopaz itself remains MIT licensed (see LICENSE at the repository root);
+only the bundled FFmpeg binary is covered by the GPL as described above.
